@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import WebSocketService from '../services/WebSocketService';
+import { Audio } from 'expo-av';
 
 const { width } = Dimensions.get('window');
 
@@ -29,6 +30,8 @@ const DashboardScreen = () => {
   // Animation values (persist across renders)
   const pulseAnim = React.useRef(new Animated.Value(1)).current;
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
+  const soundRef = React.useRef(null);
+  const [isMuted] = useState(false);
 
   useEffect(() => {
     // Fade in animation on mount
@@ -59,13 +62,28 @@ const DashboardScreen = () => {
       setLastUpdate(new Date());
     };
 
-    const handleAlert = (alert) => {
+    // Debounce state for alert beeps
+    let lastBeepAt = 0;
+
+    const handleAlert = async (alert) => {
       Alert.alert(
         `🚨 ${alert.type.toUpperCase()}`,
         alert.message,
         [{ text: 'OK', style: 'default' }],
         { cancelable: true }
       );
+      // short beep on alert
+      try {
+        const now = Date.now();
+        if (!isMuted && soundRef.current && now - lastBeepAt >= 1500) {
+          lastBeepAt = now;
+          await soundRef.current.setPositionAsync(0);
+          await soundRef.current.playAsync();
+          setTimeout(async () => {
+            try { await soundRef.current.pauseAsync(); } catch (_) {}
+          }, 1500);
+        }
+      } catch (_) {}
     };
 
     WebSocketService.on('connected', handleConnection);
@@ -74,11 +92,32 @@ const DashboardScreen = () => {
 
     WebSocketService.connect();
 
+    // Configure audio and preload hawk sound
+    (async () => {
+      try {
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        });
+        const { sound } = await Audio.Sound.createAsync(
+          require('../../assets/Hawk.mp3'),
+          { shouldPlay: false, volume: 1.0 }
+        );
+        soundRef.current = sound;
+      } catch (_) {}
+    })();
+
     return () => {
       WebSocketService.off('connected', handleConnection);
       WebSocketService.off('data', handleData);
       WebSocketService.off('alert', handleAlert);
       WebSocketService.disconnect();
+      if (soundRef.current) {
+        try { soundRef.current.unloadAsync(); } catch (_) {}
+        soundRef.current = null;
+      }
     };
   }, []);
 
@@ -124,9 +163,48 @@ const DashboardScreen = () => {
         RESET_SYSTEM: 'Reset System',
       };
       Alert.alert('✅ Command Sent', `${labels[command] || command} triggered.`, [{ text: 'OK' }]);
+      // play full hawk only for SOUND_ALARM
+      if (command === 'SOUND_ALARM' && soundRef.current && !isMuted) {
+        (async () => {
+          try {
+            await soundRef.current.setPositionAsync(0);
+            await soundRef.current.playAsync();
+          } catch (_) {}
+        })();
+      }
     } catch (e) {
       Alert.alert('❌ Failed', 'Could not send command.', [{ text: 'OK' }]);
     }
+  };
+
+  // Stream mock state
+  const [isStreamConnected, setIsStreamConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const [bitrateKbps, setBitrateKbps] = useState(850);
+  const [latencyMs, setLatencyMs] = useState(120);
+
+  const connectStream = () => {
+    setIsReconnecting(true);
+    setTimeout(() => {
+      setIsReconnecting(false);
+      setIsStreamConnected(true);
+      setBitrateKbps(800 + Math.round(Math.random() * 400));
+      setLatencyMs(80 + Math.round(Math.random() * 120));
+    }, 1200);
+  };
+
+  const disconnectStream = () => {
+    setIsStreamConnected(false);
+  };
+
+  const simulateReconnect = () => {
+    if (!isStreamConnected) return;
+    setIsReconnecting(true);
+    setTimeout(() => {
+      setIsReconnecting(false);
+      setBitrateKbps(700 + Math.round(Math.random() * 300));
+      setLatencyMs(100 + Math.round(Math.random() * 150));
+    }, 1200);
   };
 
   return (
@@ -166,6 +244,43 @@ const DashboardScreen = () => {
       </LinearGradient>
 
       <View style={styles.content}>
+        {/* Live Stream (Mock) */}
+        <View style={styles.streamCard}>
+          <View style={styles.streamHeader}>
+            <View style={styles.liveBadge}>
+              <Text style={styles.liveDot}>●</Text>
+              <Text style={styles.liveText}>LIVE</Text>
+            </View>
+            {isStreamConnected ? (
+              <Text style={styles.streamMeta}>{bitrateKbps} kbps · {latencyMs} ms</Text>
+            ) : (
+              <Text style={styles.streamMeta}>Disconnected</Text>
+            )}
+          </View>
+          <View style={styles.streamBody}>
+            {isReconnecting ? (
+              <Text style={styles.reconnectingText}>Reconnecting…</Text>
+            ) : (
+              <Text style={styles.previewPlaceholder}>
+                {isStreamConnected ? 'Stream active (mock preview)' : 'No preview available'}
+              </Text>
+            )}
+          </View>
+          <View style={styles.streamActions}>
+            {isStreamConnected ? (
+              <TouchableOpacity style={[styles.streamButton, { backgroundColor: '#FF6B6B' }]} onPress={disconnectStream}>
+                <Text style={styles.streamButtonText}>Disconnect</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={[styles.streamButton, { backgroundColor: '#51CF66' }]} onPress={connectStream}>
+                <Text style={styles.streamButtonText}>Connect</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={[styles.streamButton, { backgroundColor: '#339AF0' }]} onPress={simulateReconnect}>
+              <Text style={styles.streamButtonText}>Simulate Reconnect</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
         {/* Quick Actions */}
         <View style={styles.quickSection}>
           <Text style={styles.sectionTitle}>⚡ Quick Actions</Text>
@@ -337,6 +452,66 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 15,
+  },
+  streamCard: {
+    backgroundColor: 'white',
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 15,
+    elevation: 3,
+  },
+  streamHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  liveDot: {
+    color: '#FF4757',
+    marginRight: 6,
+    fontWeight: '900',
+  },
+  liveText: {
+    color: '#FF4757',
+    fontWeight: '700',
+  },
+  streamMeta: {
+    color: '#666',
+  },
+  streamBody: {
+    height: 140,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  reconnectingText: {
+    color: '#FF6B6B',
+    fontWeight: '700',
+  },
+  previewPlaceholder: {
+    color: '#888',
+    fontStyle: 'italic',
+  },
+  streamActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  streamButton: {
+    flex: 1,
+    marginRight: 10,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  streamButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
   quickSection: {
     marginBottom: 20,
