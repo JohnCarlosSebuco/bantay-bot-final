@@ -16,10 +16,12 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { CONFIG } from '../config/config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LocaleContext, saveLang } from '../i18n/i18n';
 
 const { width } = Dimensions.get('window');
 
 const SettingsScreen = () => {
+  const { lang, setLang } = React.useContext(LocaleContext);
   const [esp32IP, setEsp32IP] = useState(CONFIG.ESP32_IP);
   const [wsPort, setWsPort] = useState(CONFIG.ESP32_PORT.toString());
   const [updateInterval, setUpdateInterval] = useState(CONFIG.UPDATE_INTERVAL.toString());
@@ -146,6 +148,13 @@ const SettingsScreen = () => {
     );
   };
 
+  const toggleLanguage = async () => {
+    const newLang = lang === 'tl' ? 'en' : 'tl';
+    setLang(newLang);
+    await saveLang(newLang);
+    Alert.alert('✅ Language Updated', `Language set to ${newLang === 'tl' ? 'Tagalog' : 'English'}`);
+  };
+
   const InputCard = ({ title, value, onChangeText, placeholder, keyboardType = 'default', description }) => (
     <View style={styles.inputCard}>
       <Text style={styles.inputLabel}>{title}</Text>
@@ -263,6 +272,15 @@ const SettingsScreen = () => {
           {/* App Preferences Section */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>📱 App Preferences</Text>
+            <View style={styles.infoCard}>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Language</Text>
+                <Text style={styles.infoValue}>{lang === 'tl' ? 'Tagalog' : 'English'}</Text>
+              </View>
+              <TouchableOpacity style={styles.resetButton} onPress={toggleLanguage}>
+                <Text style={styles.resetButtonText}>Switch to {lang === 'tl' ? 'English' : 'Tagalog'}</Text>
+              </TouchableOpacity>
+            </View>
             
             <ToggleCard
               title="Push Notifications"

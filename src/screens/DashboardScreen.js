@@ -31,6 +31,7 @@ const DashboardScreen = () => {
   const pulseAnim = React.useRef(new Animated.Value(1)).current;
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const soundRef = React.useRef(null);
+  const lastBeepAtRef = React.useRef(0);
   const [isMuted] = useState(false);
 
   useEffect(() => {
@@ -62,9 +63,6 @@ const DashboardScreen = () => {
       setLastUpdate(new Date());
     };
 
-    // Debounce state for alert beeps
-    let lastBeepAt = 0;
-
     const handleAlert = async (alert) => {
       Alert.alert(
         `🚨 ${alert.type.toUpperCase()}`,
@@ -72,13 +70,13 @@ const DashboardScreen = () => {
         [{ text: 'OK', style: 'default' }],
         { cancelable: true }
       );
-      // short beep on alert
+      // Debounced 1.5s hawk beep on alert
       try {
         const now = Date.now();
-        if (!isMuted && soundRef.current && now - lastBeepAt >= 1500) {
-          lastBeepAt = now;
-          await soundRef.current.setPositionAsync(0);
-          await soundRef.current.playAsync();
+        if (now - lastBeepAtRef.current < 1500) return;
+        if (!isMuted && soundRef.current) {
+          lastBeepAtRef.current = now;
+          await soundRef.current.replayAsync();
           setTimeout(async () => {
             try { await soundRef.current.pauseAsync(); } catch (_) {}
           }, 1500);
