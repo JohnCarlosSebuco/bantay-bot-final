@@ -4,6 +4,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import DashboardScreen from './src/screens/DashboardScreen';
 import ControlsScreen from './src/screens/ControlsScreen';
+import HistoryScreen from './src/screens/HistoryScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 
 const Tab = createBottomTabNavigator();
@@ -46,6 +47,13 @@ export default function App() {
           component={SettingsScreen}
           options={{
             tabBarLabel: 'Settings',
+          }}
+        />
+        <Tab.Screen 
+          name="History" 
+          component={HistoryScreen}
+          options={{
+            tabBarLabel: 'History',
           }}
         />
       </Tab.Navigator>
