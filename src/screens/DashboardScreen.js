@@ -6,7 +6,8 @@ import {
   ScrollView,
   Alert,
   Animated,
-  Dimensions
+  Dimensions,
+  TouchableOpacity
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import WebSocketService from '../services/WebSocketService';
@@ -114,6 +115,20 @@ const DashboardScreen = () => {
 
   const soilData = getSoilMoistureData(sensorData.soilMoisture);
 
+  const sendQuickAction = (command) => {
+    try {
+      WebSocketService.send({ command, timestamp: Date.now() });
+      const labels = {
+        MOVE_ARMS: 'Move Arms',
+        SOUND_ALARM: 'Sound Alarm',
+        RESET_SYSTEM: 'Reset System',
+      };
+      Alert.alert('✅ Command Sent', `${labels[command] || command} triggered.`, [{ text: 'OK' }]);
+    } catch (e) {
+      Alert.alert('❌ Failed', 'Could not send command.', [{ text: 'OK' }]);
+    }
+  };
+
   return (
     <ScrollView 
       style={styles.container}
@@ -151,6 +166,21 @@ const DashboardScreen = () => {
       </LinearGradient>
 
       <View style={styles.content}>
+        {/* Quick Actions */}
+        <View style={styles.quickSection}>
+          <Text style={styles.sectionTitle}>⚡ Quick Actions</Text>
+          <View style={styles.quickRow}>
+            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#667eea' }]} onPress={() => sendQuickAction('MOVE_ARMS')}>
+              <Text style={styles.quickButtonText}>🤖 Move Arms</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#FF6B6B' }]} onPress={() => sendQuickAction('SOUND_ALARM')}>
+              <Text style={styles.quickButtonText}>📢 Make Sound</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#fa709a' }]} onPress={() => sendQuickAction('RESET_SYSTEM')}>
+              <Text style={styles.quickButtonText}>🔄 Restart</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
 
         {/* Sensor Cards Grid */}
         <Animated.View style={[styles.sensorGrid, { opacity: fadeAnim }]}>
@@ -307,6 +337,26 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 15,
+  },
+  quickSection: {
+    marginBottom: 20,
+  },
+  quickRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  quickButton: {
+    flex: 1,
+    marginRight: 10,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 3,
+  },
+  quickButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
   modeCard: {
     backgroundColor: 'white',
