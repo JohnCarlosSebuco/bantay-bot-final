@@ -30,8 +30,21 @@ class WebSocketService {
         try {
           const data = JSON.parse(event.data);
           if (data && data.type === 'alert') {
+            // Include speaker alarm status with alerts
+            if (data.speakerAlarmActive !== undefined) {
+              this.emit('speakerStatus', data.speakerAlarmActive);
+            }
             this.emit('alert', data);
+          } else if (data && data.type === 'status') {
+            this.emit('status', data);
           } else {
+            // Check for speaker alarm status in regular data
+            if (data && data.speakerAlarmActive !== undefined) {
+              this.emit('speakerStatus', data.speakerAlarmActive);
+            }
+            if (data && data.speakerAlarmEnabled !== undefined) {
+              this.emit('speakerEnabled', data.speakerAlarmEnabled);
+            }
             this.emit('data', data);
           }
         } catch (error) {

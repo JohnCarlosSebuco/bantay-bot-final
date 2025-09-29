@@ -23,7 +23,9 @@ const DashboardScreen = () => {
     distance: 0,
     temperature: 0,
     humidity: 0,
-    soilMoisture: 0
+    soilMoisture: 0,
+    speakerAlarmActive: false,
+    speakerAlarmEnabled: true
   });
   const [lastUpdate, setLastUpdate] = useState(new Date());
   
@@ -58,8 +60,10 @@ const DashboardScreen = () => {
       const temperature = safeNumber(data?.temperature, 0);
       const humidity = safeNumber(data?.humidity, 0);
       const soilMoisture = safeNumber(data?.soilMoisture, 0);
+      const speakerAlarmActive = data?.speakerAlarmActive || false;
+      const speakerAlarmEnabled = data?.speakerAlarmEnabled !== undefined ? data.speakerAlarmEnabled : true;
 
-      setSensorData({ motion, distance, temperature, humidity, soilMoisture });
+      setSensorData({ motion, distance, temperature, humidity, soilMoisture, speakerAlarmActive, speakerAlarmEnabled });
       setLastUpdate(new Date());
     };
 
@@ -295,6 +299,34 @@ const DashboardScreen = () => {
           </View>
         </View>
 
+        {/* Speaker Status Card */}
+        <View style={styles.speakerStatusCard}>
+          <View style={styles.speakerHeader}>
+            <Text style={styles.speakerIcon}>
+              {sensorData.speakerAlarmActive ? '🔊' : '🔇'}
+            </Text>
+            <Text style={styles.speakerTitle}>Speaker Alarm</Text>
+          </View>
+          <View style={styles.speakerBody}>
+            <View style={styles.speakerRow}>
+              <Text style={styles.speakerLabel}>Status:</Text>
+              <Text style={[styles.speakerStatus, {
+                color: sensorData.speakerAlarmActive ? '#FF6B6B' : '#51CF66'
+              }]}>
+                {sensorData.speakerAlarmActive ? 'PLAYING' : 'IDLE'}
+              </Text>
+            </View>
+            <View style={styles.speakerRow}>
+              <Text style={styles.speakerLabel}>Auto Mode:</Text>
+              <Text style={[styles.speakerStatus, {
+                color: sensorData.speakerAlarmEnabled ? '#51CF66' : '#FFA07A'
+              }]}>
+                {sensorData.speakerAlarmEnabled ? 'ENABLED' : 'DISABLED'}
+              </Text>
+            </View>
+          </View>
+        </View>
+
         {/* Sensor Cards Grid */}
         <Animated.View style={[styles.sensorGrid, { opacity: fadeAnim }]}>
           {/* Motion Detection Card */}
@@ -305,8 +337,8 @@ const DashboardScreen = () => {
               </Text>
               <Text style={styles.sensorLabel}>Motion</Text>
             </View>
-            <Text style={[styles.sensorValue, { 
-              color: sensorData.motion ? '#FF6B6B' : '#51CF66' 
+            <Text style={[styles.sensorValue, {
+              color: sensorData.motion ? '#FF6B6B' : '#51CF66'
             }]}>
               {sensorData.motion ? 'DETECTED' : 'Clear'}
             </Text>
@@ -562,6 +594,50 @@ const styles = StyleSheet.create({
   },
   switch: {
     transform: [{ scaleX: 1.1 }, { scaleY: 1.1 }],
+  },
+  speakerStatusCard: {
+    backgroundColor: 'white',
+    borderRadius: 15,
+    padding: 20,
+    marginBottom: 20,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#9B59B6',
+  },
+  speakerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  speakerIcon: {
+    fontSize: 28,
+    marginRight: 10,
+  },
+  speakerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+  },
+  speakerBody: {
+    paddingLeft: 38,
+  },
+  speakerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  speakerLabel: {
+    fontSize: 14,
+    color: '#666',
+  },
+  speakerStatus: {
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   sensorGrid: {
     flexDirection: 'row',

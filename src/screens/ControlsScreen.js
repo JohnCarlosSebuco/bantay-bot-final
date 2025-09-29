@@ -30,6 +30,11 @@ const ControlsScreen = () => {
     TEST_BUZZER: new Animated.Value(1),
     RESET_SYSTEM: new Animated.Value(1),
     CALIBRATE_SENSORS: new Animated.Value(1),
+    START_SPEAKER_ALARM: new Animated.Value(1),
+    STOP_SPEAKER_ALARM: new Animated.Value(1),
+    ENABLE_SPEAKER_ALARM: new Animated.Value(1),
+    DISABLE_SPEAKER_ALARM: new Animated.Value(1),
+    NEXT_TRACK: new Animated.Value(1),
   }).current;
 
   const animateButton = (command) => {
@@ -111,7 +116,12 @@ const ControlsScreen = () => {
       SOUND_ALARM: 'Sound Alarm',
       TEST_BUZZER: 'Buzzer Test',
       RESET_SYSTEM: 'System Reset',
-      CALIBRATE_SENSORS: 'Sensor Calibration'
+      CALIBRATE_SENSORS: 'Sensor Calibration',
+      START_SPEAKER_ALARM: 'Start Speaker Alarm',
+      STOP_SPEAKER_ALARM: 'Stop Speaker Alarm',
+      ENABLE_SPEAKER_ALARM: 'Enable Speaker Alarm',
+      DISABLE_SPEAKER_ALARM: 'Disable Speaker Alarm',
+      NEXT_TRACK: 'Next Track',
     };
     return names[command] || command;
   };
@@ -254,6 +264,54 @@ const ControlsScreen = () => {
               style={styles.halfWidth}
             />
           </View>
+        </View>
+
+        {/* Speaker Alarm Controls Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>🔊 Speaker Alarm Controls</Text>
+          <View style={styles.buttonRow}>
+            <ControlButton
+              command="START_SPEAKER_ALARM"
+              title="Start Speaker"
+              description="Activate speaker alarm"
+              icon="▶️"
+              gradientColors={['#51CF66', '#45B75A']}
+              style={styles.halfWidth}
+            />
+            <ControlButton
+              command="STOP_SPEAKER_ALARM"
+              title="Stop Speaker"
+              description="Stop speaker alarm"
+              icon="⏹️"
+              gradientColors={['#FF6B6B', '#FF4757']}
+              style={styles.halfWidth}
+            />
+          </View>
+          <View style={styles.buttonRow}>
+            <ControlButton
+              command="ENABLE_SPEAKER_ALARM"
+              title="Enable Auto"
+              description="Auto-alarm on motion"
+              icon="✅"
+              gradientColors={['#4ECDC4', '#3ABDB4']}
+              style={styles.halfWidth}
+            />
+            <ControlButton
+              command="DISABLE_SPEAKER_ALARM"
+              title="Disable Auto"
+              description="Manual control only"
+              icon="❌"
+              gradientColors={['#FFA07A', '#FF8C69']}
+              style={styles.halfWidth}
+            />
+          </View>
+          <ControlButton
+            command="NEXT_TRACK"
+            title="Next Sound Track"
+            description="Switch to next alarm sound"
+            icon="⏭️"
+            gradientColors={['#9B59B6', '#8E44AD']}
+          />
         </View>
 
         {/* System Controls Section */}
