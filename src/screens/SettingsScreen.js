@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { CONFIG } from '../config/config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LocaleContext, saveLang } from '../i18n/i18n';
+import SpeakerControl from '../components/SpeakerControl';
 
 const { width } = Dimensions.get('window');
 
@@ -28,6 +29,8 @@ const SettingsScreen = () => {
   const [notifications, setNotifications] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
   const [autoReconnect, setAutoReconnect] = useState(true);
+  const [volume, setVolume] = useState(1.0);
+  const [isMuted, setIsMuted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('Not tested');
   
@@ -50,6 +53,8 @@ const SettingsScreen = () => {
       const savedNotifications = await AsyncStorage.getItem('notifications');
       const savedDarkMode = await AsyncStorage.getItem('dark_mode');
       const savedAutoReconnect = await AsyncStorage.getItem('auto_reconnect');
+      const savedVolume = await AsyncStorage.getItem('volume');
+      const savedMuted = await AsyncStorage.getItem('is_muted');
 
       if (savedIP) setEsp32IP(savedIP);
       if (savedPort) setWsPort(savedPort);
@@ -57,6 +62,8 @@ const SettingsScreen = () => {
       if (savedNotifications !== null) setNotifications(JSON.parse(savedNotifications));
       if (savedDarkMode !== null) setDarkMode(JSON.parse(savedDarkMode));
       if (savedAutoReconnect !== null) setAutoReconnect(JSON.parse(savedAutoReconnect));
+      if (savedVolume !== null) setVolume(parseFloat(savedVolume));
+      if (savedMuted !== null) setIsMuted(JSON.parse(savedMuted));
     } catch (error) {
       console.error('Error loading settings:', error);
     }
@@ -71,7 +78,9 @@ const SettingsScreen = () => {
         ['update_interval', updateInterval],
         ['notifications', JSON.stringify(notifications)],
         ['dark_mode', JSON.stringify(darkMode)],
-        ['auto_reconnect', JSON.stringify(autoReconnect)]
+        ['auto_reconnect', JSON.stringify(autoReconnect)],
+        ['volume', volume.toString()],
+        ['is_muted', JSON.stringify(isMuted)]
       ]);
       
       CONFIG.ESP32_IP = esp32IP;
@@ -267,6 +276,18 @@ const SettingsScreen = () => {
                 </LinearGradient>
               </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Speaker & Audio Section */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>🔊 Speaker & Audio</Text>
+            <SpeakerControl
+              volume={volume}
+              onVolumeChange={setVolume}
+              isMuted={isMuted}
+              onMuteToggle={() => setIsMuted(!isMuted)}
+              style={{ marginBottom: 15 }}
+            />
           </View>
 
           {/* App Preferences Section */}

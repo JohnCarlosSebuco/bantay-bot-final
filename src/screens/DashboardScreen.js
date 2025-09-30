@@ -7,11 +7,17 @@ import {
   Alert,
   Animated,
   Dimensions,
-  TouchableOpacity
+  TouchableOpacity,
+  Image
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import WebSocketService from '../services/WebSocketService';
 import { Audio } from 'expo-av';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { CONFIG } from '../config/config';
+import CameraSettings from '../components/CameraSettings';
+import DetectionControls from '../components/DetectionControls';
+import detectionHistoryService from '../services/DetectionHistoryService';
 
 const { width } = Dimensions.get('window');
 
@@ -20,10 +26,13 @@ const DashboardScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [sensorData, setSensorData] = useState({
     motion: 0,
-    distance: 0,
     temperature: 0,
     humidity: 0,
-    soilMoisture: 0
+    soilMoisture: 0,
+    headPosition: 0, // Stepper motor head position (degrees)
+    birdDetectionEnabled: true,
+    birdsDetectedToday: 0,
+    detectionSensitivity: 2,
   });
   const [lastUpdate, setLastUpdate] = useState(new Date());
   
@@ -32,9 +41,28 @@ const DashboardScreen = () => {
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const soundRef = React.useRef(null);
   const lastBeepAtRef = React.useRef(0);
-  const [isMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(1.0);
+
+  // Camera settings state
+  const [cameraBrightness, setCameraBrightness] = useState(0);
+  const [cameraContrast, setCameraContrast] = useState(0);
+  const [grayscaleMode, setGrayscaleMode] = useState(false);
 
   useEffect(() => {
+    // Load audio settings
+    const loadAudioSettings = async () => {
+      try {
+        const savedVolume = await AsyncStorage.getItem('volume');
+        const savedMuted = await AsyncStorage.getItem('is_muted');
+        if (savedVolume !== null) setVolume(parseFloat(savedVolume));
+        if (savedMuted !== null) setIsMuted(JSON.parse(savedMuted));
+      } catch (error) {
+        console.log('Error loading audio settings:', error);
+      }
+    };
+    loadAudioSettings();
+
     // Fade in animation on mount
     Animated.timing(fadeAnim, {
       toValue: 1,
@@ -54,22 +82,54 @@ const DashboardScreen = () => {
     const handleData = (data) => {
       const safeNumber = (v, fallback = 0) => (typeof v === 'number' && isFinite(v) ? v : fallback);
       const motion = data && (data.motion ? 1 : 0);
-      const distance = safeNumber(data?.distance, -1);
       const temperature = safeNumber(data?.temperature, 0);
       const humidity = safeNumber(data?.humidity, 0);
       const soilMoisture = safeNumber(data?.soilMoisture, 0);
+      const headPosition = safeNumber(data?.headPosition, 0);
+      const birdDetectionEnabled = data?.birdDetectionEnabled !== undefined ? data.birdDetectionEnabled : true;
+      const birdsDetectedToday = safeNumber(data?.birdsDetectedToday, 0);
+      const detectionSensitivity = safeNumber(data?.detectionSensitivity, 2);
 
-      setSensorData({ motion, distance, temperature, humidity, soilMoisture });
+      setSensorData({
+        motion,
+        temperature,
+        humidity,
+        soilMoisture,
+        headPosition,
+        birdDetectionEnabled,
+        birdsDetectedToday,
+        detectionSensitivity,
+      });
       setLastUpdate(new Date());
     };
 
     const handleAlert = async (alert) => {
-      Alert.alert(
-        `🚨 ${alert.type.toUpperCase()}`,
-        alert.message,
-        [{ text: 'OK', style: 'default' }],
-        { cancelable: true }
-      );
+      // Handle bird detection alert
+      if (alert.type === 'bird_detection') {
+        // Save to detection history
+        await detectionHistoryService.addDetection({
+          type: 'bird',
+          message: alert.message,
+          count: alert.count || 1,
+        });
+
+        // Show alert notification
+        Alert.alert(
+          '🐦 Bird Detected!',
+          `${alert.message}\nTotal today: ${alert.count}`,
+          [{ text: 'OK', style: 'default' }],
+          { cancelable: true }
+        );
+      } else {
+        // Generic alert
+        Alert.alert(
+          `🚨 ${alert.type.toUpperCase()}`,
+          alert.message,
+          [{ text: 'OK', style: 'default' }],
+          { cancelable: true }
+        );
+      }
+
       // Debounced 1.5s hawk beep on alert
       try {
         const now = Date.now();
@@ -101,7 +161,7 @@ const DashboardScreen = () => {
         });
         const { sound } = await Audio.Sound.createAsync(
           require('../../assets/Hawk.mp3'),
-          { shouldPlay: false, volume: 1.0 }
+          { shouldPlay: false, volume: isMuted ? 0 : volume }
         );
         soundRef.current = sound;
       } catch (_) {}
@@ -152,11 +212,13 @@ const DashboardScreen = () => {
 
   const soilData = getSoilMoistureData(sensorData.soilMoisture);
 
-  const sendQuickAction = (command) => {
+  const sendQuickAction = (command, value) => {
     try {
-      WebSocketService.send({ command, timestamp: Date.now() });
+      WebSocketService.send({ command, value, timestamp: Date.now() });
       const labels = {
-        MOVE_ARMS: 'Move Arms',
+        ROTATE_HEAD_LEFT: 'Rotate Head Left',
+        ROTATE_HEAD_RIGHT: 'Rotate Head Right',
+        ROTATE_HEAD_CENTER: 'Center Head',
         SOUND_ALARM: 'Sound Alarm',
         RESET_SYSTEM: 'Reset System',
       };
@@ -165,6 +227,7 @@ const DashboardScreen = () => {
       if (command === 'SOUND_ALARM' && soundRef.current && !isMuted) {
         (async () => {
           try {
+            await soundRef.current.setVolumeAsync(volume);
             await soundRef.current.setPositionAsync(0);
             await soundRef.current.playAsync();
           } catch (_) {}
@@ -175,34 +238,18 @@ const DashboardScreen = () => {
     }
   };
 
-  // Stream mock state
-  const [isStreamConnected, setIsStreamConnected] = useState(false);
-  const [isReconnecting, setIsReconnecting] = useState(false);
-  const [bitrateKbps, setBitrateKbps] = useState(850);
-  const [latencyMs, setLatencyMs] = useState(120);
+  // ESP32 CAM Stream state
+  const [streamUrl, setStreamUrl] = useState('');
+  const [streamRefreshKey, setStreamRefreshKey] = useState(0);
 
-  const connectStream = () => {
-    setIsReconnecting(true);
-    setTimeout(() => {
-      setIsReconnecting(false);
-      setIsStreamConnected(true);
-      setBitrateKbps(800 + Math.round(Math.random() * 400));
-      setLatencyMs(80 + Math.round(Math.random() * 120));
-    }, 1200);
-  };
+  useEffect(() => {
+    // Set ESP32 CAM stream URL
+    const esp32Ip = CONFIG.ESP32_IP;
+    setStreamUrl(`http://${esp32Ip}:81/stream`);
+  }, []);
 
-  const disconnectStream = () => {
-    setIsStreamConnected(false);
-  };
-
-  const simulateReconnect = () => {
-    if (!isStreamConnected) return;
-    setIsReconnecting(true);
-    setTimeout(() => {
-      setIsReconnecting(false);
-      setBitrateKbps(700 + Math.round(Math.random() * 300));
-      setLatencyMs(100 + Math.round(Math.random() * 150));
-    }, 1200);
+  const refreshStream = () => {
+    setStreamRefreshKey(prev => prev + 1);
   };
 
   return (
@@ -221,17 +268,32 @@ const DashboardScreen = () => {
             <Text style={styles.subtitle}>Smart Crop Protection</Text>
             
             <Animated.View style={[styles.connectionCard, { transform: [{ scale: pulseAnim }] }]}>
-              <View style={styles.connectionStatus}>
-                <View style={[styles.statusDot, { 
-                  backgroundColor: isConnected ? '#51CF66' : '#FF6B6B',
-                  shadowColor: isConnected ? '#51CF66' : '#FF6B6B',
-                  shadowOpacity: 0.8,
-                  shadowRadius: 4,
-                  shadowOffset: { width: 0, height: 2 }
-                }]} />
-                <Text style={styles.statusText}>
-                  {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
-                </Text>
+              <View style={styles.connectionRow}>
+                <View style={styles.connectionStatus}>
+                  <View style={[styles.statusDot, {
+                    backgroundColor: isConnected ? '#51CF66' : '#FF6B6B',
+                    shadowColor: isConnected ? '#51CF66' : '#FF6B6B',
+                    shadowOpacity: 0.8,
+                    shadowRadius: 4,
+                    shadowOffset: { width: 0, height: 2 }
+                  }]} />
+                  <Text style={styles.statusText}>
+                    {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.muteButton}
+                  onPress={() => {
+                    const newMuted = !isMuted;
+                    setIsMuted(newMuted);
+                    AsyncStorage.setItem('is_muted', JSON.stringify(newMuted));
+                    if (soundRef.current) {
+                      soundRef.current.setVolumeAsync(newMuted ? 0 : volume);
+                    }
+                  }}
+                >
+                  <Text style={styles.muteIcon}>{isMuted ? '🔇' : '🔊'}</Text>
+                </TouchableOpacity>
               </View>
               <Text style={styles.lastUpdate}>
                 Last update: {formatTime(lastUpdate)}
@@ -242,58 +304,97 @@ const DashboardScreen = () => {
       </LinearGradient>
 
       <View style={styles.content}>
-        {/* Live Stream (Mock) */}
+        {/* ESP32 CAM Live Stream */}
         <View style={styles.streamCard}>
           <View style={styles.streamHeader}>
             <View style={styles.liveBadge}>
               <Text style={styles.liveDot}>●</Text>
-              <Text style={styles.liveText}>LIVE</Text>
+              <Text style={styles.liveText}>ESP32 CAM</Text>
             </View>
-            {isStreamConnected ? (
-              <Text style={styles.streamMeta}>{bitrateKbps} kbps · {latencyMs} ms</Text>
-            ) : (
-              <Text style={styles.streamMeta}>Disconnected</Text>
-            )}
+            <TouchableOpacity onPress={refreshStream} style={styles.refreshButton}>
+              <Text style={styles.refreshText}>🔄 Refresh</Text>
+            </TouchableOpacity>
           </View>
           <View style={styles.streamBody}>
-            {isReconnecting ? (
-              <Text style={styles.reconnectingText}>Reconnecting…</Text>
+            {streamUrl ? (
+              <Image
+                key={streamRefreshKey}
+                source={{ uri: `${streamUrl}?t=${Date.now()}` }}
+                style={styles.streamImage}
+                resizeMode="cover"
+                onError={() => console.log('Stream error')}
+              />
             ) : (
-              <Text style={styles.previewPlaceholder}>
-                {isStreamConnected ? 'Stream active (mock preview)' : 'No preview available'}
-              </Text>
+              <Text style={styles.previewPlaceholder}>Loading camera...</Text>
             )}
           </View>
-          <View style={styles.streamActions}>
-            {isStreamConnected ? (
-              <TouchableOpacity style={[styles.streamButton, { backgroundColor: '#FF6B6B' }]} onPress={disconnectStream}>
-                <Text style={styles.streamButtonText}>Disconnect</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={[styles.streamButton, { backgroundColor: '#51CF66' }]} onPress={connectStream}>
-                <Text style={styles.streamButtonText}>Connect</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity style={[styles.streamButton, { backgroundColor: '#339AF0' }]} onPress={simulateReconnect}>
-              <Text style={styles.streamButtonText}>Simulate Reconnect</Text>
-            </TouchableOpacity>
+          <View style={styles.streamInfo}>
+            <Text style={styles.streamInfoText}>📡 {CONFIG.ESP32_IP}:81/stream</Text>
           </View>
         </View>
         {/* Quick Actions */}
         <View style={styles.quickSection}>
           <Text style={styles.sectionTitle}>⚡ Quick Actions</Text>
           <View style={styles.quickRow}>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#667eea' }]} onPress={() => sendQuickAction('MOVE_ARMS')}>
-              <Text style={styles.quickButtonText}>🤖 Move Arms</Text>
+            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#667eea' }]} onPress={() => sendQuickAction('ROTATE_HEAD_LEFT', 90)}>
+              <Text style={styles.quickButtonText}>⬅️ Turn Left</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#FF6B6B' }]} onPress={() => sendQuickAction('SOUND_ALARM')}>
-              <Text style={styles.quickButtonText}>📢 Make Sound</Text>
+            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#51CF66' }]} onPress={() => sendQuickAction('ROTATE_HEAD_CENTER', 0)}>
+              <Text style={styles.quickButtonText}>⏺️ Center</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#fa709a' }]} onPress={() => sendQuickAction('RESET_SYSTEM')}>
+            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#667eea' }]} onPress={() => sendQuickAction('ROTATE_HEAD_RIGHT', -90)}>
+              <Text style={styles.quickButtonText}>➡️ Turn Right</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.quickRow}>
+            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#FF6B6B', flex: 1 }]} onPress={() => sendQuickAction('SOUND_ALARM')}>
+              <Text style={styles.quickButtonText}>📢 Sound Alarm</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#fa709a', flex: 1, marginLeft: 10 }]} onPress={() => sendQuickAction('RESET_SYSTEM')}>
               <Text style={styles.quickButtonText}>🔄 Restart</Text>
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Bird Detection Controls */}
+        <DetectionControls
+          detectionEnabled={sensorData.birdDetectionEnabled}
+          onDetectionToggle={() => {
+            sendQuickAction('TOGGLE_DETECTION');
+          }}
+          sensitivity={sensorData.detectionSensitivity}
+          onSensitivityChange={(value) => {
+            sendQuickAction('SET_SENSITIVITY', value);
+          }}
+          birdsDetectedToday={sensorData.birdsDetectedToday}
+          onResetCount={() => {
+            sendQuickAction('RESET_BIRD_COUNT');
+          }}
+          style={{ marginBottom: 15 }}
+        />
+
+        {/* Camera Settings */}
+        <CameraSettings
+          brightness={cameraBrightness}
+          contrast={cameraContrast}
+          onBrightnessChange={(value) => {
+            setCameraBrightness(value);
+            sendQuickAction('SET_BRIGHTNESS', value);
+          }}
+          onContrastChange={(value) => {
+            setCameraContrast(value);
+            sendQuickAction('SET_CONTRAST', value);
+          }}
+          onResolutionChange={(value) => {
+            sendQuickAction('SET_RESOLUTION', value);
+          }}
+          grayscaleMode={grayscaleMode}
+          onGrayscaleModeToggle={() => {
+            setGrayscaleMode(!grayscaleMode);
+            sendQuickAction('TOGGLE_GRAYSCALE');
+          }}
+          style={{ marginBottom: 15 }}
+        />
 
         {/* Sensor Cards Grid */}
         <Animated.View style={[styles.sensorGrid, { opacity: fadeAnim }]}>
@@ -317,18 +418,18 @@ const DashboardScreen = () => {
             )}
           </View>
 
-          {/* Distance Card */}
+          {/* Head Position Card */}
           <View style={styles.sensorCard}>
             <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>📏</Text>
-              <Text style={styles.sensorLabel}>Distance</Text>
+              <Text style={styles.sensorIcon}>🔄</Text>
+              <Text style={styles.sensorLabel}>Head Position</Text>
             </View>
-            <Text style={styles.sensorValue}>{sensorData.distance >= 0 ? sensorData.distance : 'N/A'}</Text>
-            <Text style={styles.sensorUnit}>centimeters</Text>
+            <Text style={styles.sensorValue}>{sensorData.headPosition}°</Text>
+            <Text style={styles.sensorUnit}>degrees</Text>
             <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { 
-                width: `${sensorData.distance >= 0 ? Math.min((sensorData.distance / 100) * 100, 100) : 0}%`,
-                backgroundColor: sensorData.distance >= 0 && sensorData.distance < 20 ? '#FF6B6B' : '#51CF66'
+              <View style={[styles.progressFill, {
+                width: `${((sensorData.headPosition + 180) / 360) * 100}%`,
+                backgroundColor: '#667eea'
               }]} />
             </View>
           </View>
@@ -427,10 +528,27 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
   },
+  connectionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 5,
+  },
   connectionStatus: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 5,
+  },
+  muteButton: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 10,
+    padding: 8,
+    minWidth: 45,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  muteIcon: {
+    fontSize: 22,
   },
   statusDot: {
     width: 12,
@@ -496,20 +614,32 @@ const styles = StyleSheet.create({
     color: '#888',
     fontStyle: 'italic',
   },
-  streamActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  streamButton: {
-    flex: 1,
-    marginRight: 10,
-    paddingVertical: 10,
+  streamImage: {
+    width: '100%',
+    height: '100%',
     borderRadius: 10,
-    alignItems: 'center',
   },
-  streamButtonText: {
-    color: 'white',
-    fontWeight: '700',
+  refreshButton: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  refreshText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+  },
+  streamInfo: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  streamInfoText: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
   },
   quickSection: {
     marginBottom: 20,
@@ -517,6 +647,7 @@ const styles = StyleSheet.create({
   quickRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginBottom: 10,
   },
   quickButton: {
     flex: 1,
