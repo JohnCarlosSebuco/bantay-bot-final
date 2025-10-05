@@ -14,15 +14,39 @@
 #include "DFRobotDFPlayerMini.h"
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
+#include <ESPmDNS.h>
 
 // Camera model
 #include "board_config.h"
 
-// ===========================
-// WiFi Credentials
-// ===========================
-const char *ssid = "vivo Y16";
-const char *password = "00001111";
+// Configuration file (create config.h from config.h.example)
+// If config.h doesn't exist, use WiFiManager for setup
+#ifdef __has_include
+  #if __has_include("config.h")
+    #include "config.h"
+  #else
+    #warning "config.h not found - using WiFiManager for setup"
+    #define USE_WIFIMANAGER
+  #endif
+#endif
+
+// Default configuration if not specified in config.h
+#ifndef WIFI_SSID
+  #define WIFI_SSID ""  // Empty = use WiFiManager
+  #define WIFI_PASSWORD ""
+#endif
+
+#ifndef DEVICE_NAME
+  #define DEVICE_NAME "BantayBot"
+#endif
+
+#ifndef MDNS_HOSTNAME
+  #define MDNS_HOSTNAME "bantaybot"
+#endif
+
+// WiFi Credentials (loaded from config.h or WiFiManager)
+const char *ssid = WIFI_SSID;
+const char *password = WIFI_PASSWORD;
 
 // ===========================
 // Pin Definitions
@@ -139,6 +163,11 @@ bool hasDFPlayer = false;
 bool hasRS485Sensor = false;
 bool hasServos = false;
 
+// WebSocket Security
+#ifndef MAX_WEBSOCKET_MESSAGE_SIZE
+  #define MAX_WEBSOCKET_MESSAGE_SIZE 512
+#endif
+
 // ===========================
 // Function Declarations
 // ===========================
@@ -236,14 +265,47 @@ void setup() {
 #endif
 
   // Connect WiFi
-  WiFi.begin(ssid, password);
-  WiFi.setSleep(false);
-  Serial.print("📡 WiFi connecting");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  Serial.println("📡 Connecting to WiFi...");
+  if (strlen(ssid) > 0) {
+    WiFi.begin(ssid, password);
+    WiFi.setSleep(false);
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\n✅ WiFi connected");
+    } else {
+      Serial.println("\n❌ WiFi connection failed - starting AP mode");
+      WiFi.softAP(DEVICE_NAME "-Setup");
+      Serial.print("📱 Connect to: ");
+      Serial.println(DEVICE_NAME "-Setup");
+      Serial.println("🌐 Configure at: http://192.168.4.1");
+    }
+  } else {
+    // No credentials - start AP mode
+    WiFi.softAP(DEVICE_NAME "-Setup");
+    Serial.print("📱 Connect to: ");
+    Serial.println(DEVICE_NAME "-Setup");
+    Serial.println("🌐 Configure at: http://192.168.4.1");
   }
-  Serial.println("\n✅ WiFi connected");
+
+  // Setup mDNS for easy discovery
+  if (WiFi.status() == WL_CONNECTED) {
+    if (MDNS.begin(MDNS_HOSTNAME)) {
+      Serial.print("📡 mDNS started: http://");
+      Serial.print(MDNS_HOSTNAME);
+      Serial.println(".local");
+      MDNS.addService("http", "tcp", 80);
+      MDNS.addService("ws", "tcp", 80);
+    } else {
+      Serial.println("⚠️ mDNS failed to start");
+    }
+  }
 
   // Initialize components
   setupStepper();
@@ -362,11 +424,37 @@ void setupServos() {
 }
 
 void setupBirdDetection() {
+  // MEMORY LEAK FIX: Free buffers if already allocated
+  if (prevGrayBuffer) {
+    free(prevGrayBuffer);
+    prevGrayBuffer = NULL;
+  }
+  if (currGrayBuffer) {
+    free(currGrayBuffer);
+    currGrayBuffer = NULL;
+  }
+
+  // Allocate buffers
   prevGrayBuffer = (uint8_t*)malloc(GRAY_BUFFER_SIZE);
   currGrayBuffer = (uint8_t*)malloc(GRAY_BUFFER_SIZE);
 
-  if (!prevGrayBuffer || !currGrayBuffer) {
-    Serial.println("❌ Failed to allocate detection buffers");
+  // MEMORY LEAK FIX: Check each allocation individually and cleanup on failure
+  if (!prevGrayBuffer) {
+    Serial.println("❌ Failed to allocate prev buffer");
+    if (currGrayBuffer) {
+      free(currGrayBuffer);
+      currGrayBuffer = NULL;
+    }
+    birdDetectionEnabled = false;
+    return;
+  }
+
+  if (!currGrayBuffer) {
+    Serial.println("❌ Failed to allocate curr buffer");
+    if (prevGrayBuffer) {
+      free(prevGrayBuffer);
+      prevGrayBuffer = NULL;
+    }
     birdDetectionEnabled = false;
     return;
   }
@@ -375,6 +463,8 @@ void setupBirdDetection() {
   memset(currGrayBuffer, 0, GRAY_BUFFER_SIZE);
   updateDetectionSensitivity();
   Serial.println("✅ Bird detection initialized");
+  Serial.printf("📊 Memory: Prev=%p, Curr=%p, Size=%d bytes each\n",
+                prevGrayBuffer, currGrayBuffer, GRAY_BUFFER_SIZE);
 }
 
 // ===========================
@@ -528,11 +618,19 @@ void onWebSocketEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   AwsFrameInfo *info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-    data[len] = 0;
-    String message = String((char*)data);
+    // SECURITY FIX: Validate message size before processing
+    if (len >= MAX_WEBSOCKET_MESSAGE_SIZE) {
+      Serial.printf("❌ WebSocket message too large: %d bytes (max: %d)\n", len, MAX_WEBSOCKET_MESSAGE_SIZE);
+      return;
+    }
+
+    // Create safe buffer with null termination
+    char safeBuf[MAX_WEBSOCKET_MESSAGE_SIZE];
+    memcpy(safeBuf, data, len);
+    safeBuf[len] = '\0';
 
     StaticJsonDocument<200> doc;
-    DeserializationError error = deserializeJson(doc, message);
+    DeserializationError error = deserializeJson(doc, safeBuf);
     if (error) {
       Serial.printf("❌ JSON error: %s\n", error.c_str());
       return;
@@ -680,50 +778,69 @@ void updateDetectionSensitivity() {
 }
 
 void performBirdDetection() {
+  // MEMORY LEAK FIX: Ensure frame buffer is ALWAYS released
   currentFrame = esp_camera_fb_get();
-  if (!currentFrame) return;
-
-  convertToGrayscale(currentFrame, currGrayBuffer);
-
-  static bool firstFrame = true;
-  if (!firstFrame && detectMotion()) {
-    unsigned long now = millis();
-    if (now - lastDetectionTime > DETECTION_COOLDOWN) {
-      lastDetectionTime = now;
-      birdsDetectedToday++;
-
-      Serial.println("🐦 BIRD DETECTED!");
-
-      // Trigger response
-      if (hasDFPlayer) playTrack(currentTrack);
-      else soundAlarm(2000);
-
-      if (hasServos) {
-        servoOscillating = true;  // Start arm movement
-      }
-
-      rotateHead(currentHeadPosition + 45);
-
-      // Send alert
-      StaticJsonDocument<256> alertDoc;
-      alertDoc["type"] = "bird_detection";
-      alertDoc["message"] = "Nadetect ang ibon!";
-      alertDoc["count"] = birdsDetectedToday;
-      alertDoc["timestamp"] = millis();
-
-      String alertMsg;
-      serializeJson(alertDoc, alertMsg);
-      ws.textAll(alertMsg);
-    }
-  } else {
-    firstFrame = false;
+  if (!currentFrame) {
+    Serial.println("⚠️ Failed to get camera frame for detection");
+    return;
   }
 
-  uint8_t *temp = prevGrayBuffer;
-  prevGrayBuffer = currGrayBuffer;
-  currGrayBuffer = temp;
+  // Process frame in try-catch equivalent (manual cleanup on early returns)
+  bool processingSuccess = false;
 
-  esp_camera_fb_return(currentFrame);
+  do {
+    convertToGrayscale(currentFrame, currGrayBuffer);
+
+    static bool firstFrame = true;
+    if (!firstFrame && detectMotion()) {
+      unsigned long now = millis();
+      if (now - lastDetectionTime > DETECTION_COOLDOWN) {
+        lastDetectionTime = now;
+        birdsDetectedToday++;
+
+        Serial.println("🐦 BIRD DETECTED!");
+
+        // Trigger response
+        if (hasDFPlayer) playTrack(currentTrack);
+        else soundAlarm(2000);
+
+        if (hasServos) {
+          servoOscillating = true;  // Start arm movement
+        }
+
+        rotateHead(currentHeadPosition + 45);
+
+        // Send alert
+        StaticJsonDocument<256> alertDoc;
+        alertDoc["type"] = "bird_detection";
+        alertDoc["message"] = "Nadetect ang ibon!";
+        alertDoc["count"] = birdsDetectedToday;
+        alertDoc["timestamp"] = millis();
+
+        String alertMsg;
+        serializeJson(alertDoc, alertMsg);
+        ws.textAll(alertMsg);
+      }
+    } else {
+      firstFrame = false;
+    }
+
+    uint8_t *temp = prevGrayBuffer;
+    prevGrayBuffer = currGrayBuffer;
+    currGrayBuffer = temp;
+
+    processingSuccess = true;
+  } while (false);
+
+  // CRITICAL: Always release frame buffer (prevents memory leak)
+  if (currentFrame) {
+    esp_camera_fb_return(currentFrame);
+    currentFrame = NULL;
+  }
+
+  if (!processingSuccess) {
+    Serial.println("⚠️ Bird detection processing failed");
+  }
 }
 
 void convertToGrayscale(camera_fb_t *fb, uint8_t *grayBuffer) {

@@ -35,3 +35,26 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
+
+# BantayBot - Arduino configuration with sensitive data
+config.h
+
+# Arduino build files
+*.elf
+*.hex
+*.bin
+*.map
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp

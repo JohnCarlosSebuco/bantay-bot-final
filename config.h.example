@@ -1,0 +1,79 @@
+/*
+ * BantayBot Configuration Template
+ * Copy this file to config.h and update with your settings
+ * IMPORTANT: config.h is gitignored - never commit your actual credentials!
+ */
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// ===========================
+// WiFi Configuration
+// ===========================
+// Option 1: Hardcoded credentials (for testing only)
+#define WIFI_SSID "YourWiFiSSID"
+#define WIFI_PASSWORD "YourWiFiPassword"
+
+// Option 2: Use WiFiManager for web-based setup (recommended for production)
+// If WIFI_SSID is empty, WiFiManager will create "BantayBot-Setup" access point
+// Connect to it and configure WiFi through web interface at http://192.168.4.1
+
+// ===========================
+// Device Configuration
+// ===========================
+#define DEVICE_NAME "BantayBot"
+#define MDNS_HOSTNAME "bantaybot"  // Access via bantaybot.local
+
+// ===========================
+// Hardware Configuration
+// ===========================
+// Enable/disable hardware modules (set to false if not connected)
+#define ENABLE_DFPLAYER true
+#define ENABLE_RS485_SENSOR true
+#define ENABLE_SERVOS true
+#define ENABLE_STEPPER true
+
+// ===========================
+// Sensor Calibration
+// ===========================
+// RS485 Modbus Address (default: 0x01)
+#define RS485_SLAVE_ADDRESS 0x01
+
+// Stepper motor configuration
+#define STEPS_PER_REV 3200  // 1/16 microstepping: 200 * 16 = 3200
+
+// Servo pulse width (adjust based on your servo model)
+#define SERVO_PULSE_MIN 120   // Minimum pulse width
+#define SERVO_PULSE_MAX 600   // Maximum pulse width
+
+// ===========================
+// Detection Configuration
+// ===========================
+// Bird detection sensitivity (1=Low, 2=Medium, 3=High)
+#define DEFAULT_DETECTION_SENSITIVITY 2
+
+// Detection cooldown period (milliseconds)
+#define DETECTION_COOLDOWN_MS 10000  // 10 seconds
+
+// ===========================
+// Audio Configuration
+// ===========================
+// DFPlayer default volume (0-30)
+#define DEFAULT_VOLUME 20
+
+// Skip track 3 (set to true if track 3 is corrupted/missing)
+#define SKIP_TRACK_3 true
+
+// ===========================
+// Network Configuration
+// ===========================
+// WebSocket update interval (milliseconds)
+#define SENSOR_UPDATE_INTERVAL_MS 2000  // 2 seconds
+
+// Maximum WebSocket message size (bytes)
+#define MAX_WEBSOCKET_MESSAGE_SIZE 512
+
+// WebSocket reconnection attempts
+#define WS_MAX_RECONNECT_ATTEMPTS 10
+
+#endif // CONFIG_H
