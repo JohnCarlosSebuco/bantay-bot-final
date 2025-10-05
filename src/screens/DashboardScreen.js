@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import {
   View,
   Text,
@@ -8,13 +8,22 @@ import {
   Animated,
   Dimensions,
   TouchableOpacity,
-  Image
+  Image,
+  RefreshControl
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import WebSocketService from '../services/WebSocketService';
 import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config/config';
+import { LocaleContext } from '../i18n/i18n';
+
+// Import new farmer-first components
+import SoilSensorCard from '../components/SoilSensorCard';
+import AudioPlayerControl from '../components/AudioPlayerControl';
+import ServoArmControl from '../components/ServoArmControl';
+import StatusIndicator from '../components/StatusIndicator';
+import QuickActionButton from '../components/QuickActionButton';
 import CameraSettings from '../components/CameraSettings';
 import DetectionControls from '../components/DetectionControls';
 import detectionHistoryService from '../services/DetectionHistoryService';
@@ -22,21 +31,50 @@ import detectionHistoryService from '../services/DetectionHistoryService';
 const { width } = Dimensions.get('window');
 
 const DashboardScreen = () => {
+  const { lang } = useContext(LocaleContext);
   const [isConnected, setIsConnected] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Enhanced sensor data state with new hardware
   const [sensorData, setSensorData] = useState({
+    // Motion & Position
     motion: 0,
-    temperature: 0,
-    humidity: 0,
-    soilMoisture: 0,
-    headPosition: 0, // Stepper motor head position (degrees)
+    headPosition: 0,
+
+    // DHT22 (backup sensor)
+    dhtTemperature: 0,
+    dhtHumidity: 0,
+
+    // RS485 Soil Sensor (NEW)
+    soilHumidity: 0,
+    soilTemperature: 0,
+    soilConductivity: 0,
+    ph: 7.0,
+
+    // Audio State (NEW)
+    currentTrack: 1,
+    volume: 20,
+    audioPlaying: false,
+
+    // Servo State (NEW)
+    leftArmAngle: 90,
+    rightArmAngle: 90,
+    oscillating: false,
+
+    // Bird Detection
     birdDetectionEnabled: true,
     birdsDetectedToday: 0,
     detectionSensitivity: 2,
+
+    // Hardware Capabilities (NEW)
+    hasDFPlayer: false,
+    hasRS485Sensor: false,
+    hasServos: false,
   });
+
   const [lastUpdate, setLastUpdate] = useState(new Date());
-  
-  // Animation values (persist across renders)
+
+  // Animation values
   const pulseAnim = React.useRef(new Animated.Value(1)).current;
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const soundRef = React.useRef(null);
@@ -48,6 +86,10 @@ const DashboardScreen = () => {
   const [cameraBrightness, setCameraBrightness] = useState(0);
   const [cameraContrast, setCameraContrast] = useState(0);
   const [grayscaleMode, setGrayscaleMode] = useState(false);
+
+  // Camera stream state
+  const [streamUrl, setStreamUrl] = useState('');
+  const [streamRefreshKey, setStreamRefreshKey] = useState(0);
 
   useEffect(() => {
     // Load audio settings
@@ -63,7 +105,7 @@ const DashboardScreen = () => {
     };
     loadAudioSettings();
 
-    // Fade in animation on mount
+    // Fade in animation
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 800,
@@ -72,7 +114,6 @@ const DashboardScreen = () => {
 
     const handleConnection = (connected) => {
       setIsConnected(connected);
-      // Pulse animation when connection changes
       Animated.sequence([
         Animated.timing(pulseAnim, { toValue: 1.2, duration: 200, useNativeDriver: true }),
         Animated.timing(pulseAnim, { toValue: 1, duration: 200, useNativeDriver: true })
@@ -81,47 +122,61 @@ const DashboardScreen = () => {
 
     const handleData = (data) => {
       const safeNumber = (v, fallback = 0) => (typeof v === 'number' && isFinite(v) ? v : fallback);
-      const motion = data && (data.motion ? 1 : 0);
-      const temperature = safeNumber(data?.temperature, 0);
-      const humidity = safeNumber(data?.humidity, 0);
-      const soilMoisture = safeNumber(data?.soilMoisture, 0);
-      const headPosition = safeNumber(data?.headPosition, 0);
-      const birdDetectionEnabled = data?.birdDetectionEnabled !== undefined ? data.birdDetectionEnabled : true;
-      const birdsDetectedToday = safeNumber(data?.birdsDetectedToday, 0);
-      const detectionSensitivity = safeNumber(data?.detectionSensitivity, 2);
 
       setSensorData({
-        motion,
-        temperature,
-        humidity,
-        soilMoisture,
-        headPosition,
-        birdDetectionEnabled,
-        birdsDetectedToday,
-        detectionSensitivity,
+        // Motion & Position
+        motion: data?.motion ? 1 : 0,
+        headPosition: safeNumber(data?.headPosition, 0),
+
+        // DHT22 (backup)
+        dhtTemperature: safeNumber(data?.dhtTemperature, 0),
+        dhtHumidity: safeNumber(data?.dhtHumidity, 0),
+
+        // RS485 Soil Sensor
+        soilHumidity: safeNumber(data?.soilHumidity, 0),
+        soilTemperature: safeNumber(data?.soilTemperature, 0),
+        soilConductivity: safeNumber(data?.soilConductivity, 0),
+        ph: safeNumber(data?.ph, 7.0),
+
+        // Audio State
+        currentTrack: safeNumber(data?.currentTrack, 1),
+        volume: safeNumber(data?.volume, 20),
+        audioPlaying: data?.audioPlaying || false,
+
+        // Servo State
+        leftArmAngle: safeNumber(data?.leftArmAngle, 90),
+        rightArmAngle: safeNumber(data?.rightArmAngle, 90),
+        oscillating: data?.oscillating || false,
+
+        // Bird Detection
+        birdDetectionEnabled: data?.birdDetectionEnabled !== undefined ? data.birdDetectionEnabled : true,
+        birdsDetectedToday: safeNumber(data?.birdsDetectedToday, 0),
+        detectionSensitivity: safeNumber(data?.detectionSensitivity, 2),
+
+        // Hardware Capabilities
+        hasDFPlayer: data?.hasDFPlayer || false,
+        hasRS485Sensor: data?.hasRS485Sensor || false,
+        hasServos: data?.hasServos || false,
       });
+
       setLastUpdate(new Date());
     };
 
     const handleAlert = async (alert) => {
-      // Handle bird detection alert
       if (alert.type === 'bird_detection') {
-        // Save to detection history
         await detectionHistoryService.addDetection({
           type: 'bird',
           message: alert.message,
           count: alert.count || 1,
         });
 
-        // Show alert notification
         Alert.alert(
-          '🐦 Bird Detected!',
-          `${alert.message}\nTotal today: ${alert.count}`,
+          '🐦 ' + (lang === 'tl' ? 'Nadetect ang Ibon!' : 'Bird Detected!'),
+          `${alert.message}\n${lang === 'tl' ? 'Kabuuan ngayong araw' : 'Total today'}: ${alert.count}`,
           [{ text: 'OK', style: 'default' }],
           { cancelable: true }
         );
       } else {
-        // Generic alert
         Alert.alert(
           `🚨 ${alert.type.toUpperCase()}`,
           alert.message,
@@ -130,7 +185,7 @@ const DashboardScreen = () => {
         );
       }
 
-      // Debounced 1.5s hawk beep on alert
+      // Debounced hawk beep
       try {
         const now = Date.now();
         if (now - lastBeepAtRef.current < 1500) return;
@@ -147,10 +202,9 @@ const DashboardScreen = () => {
     WebSocketService.on('connected', handleConnection);
     WebSocketService.on('data', handleData);
     WebSocketService.on('alert', handleAlert);
-
     WebSocketService.connect();
 
-    // Configure audio and preload hawk sound
+    // Audio setup
     (async () => {
       try {
         await Audio.setAudioModeAsync({
@@ -167,6 +221,10 @@ const DashboardScreen = () => {
       } catch (_) {}
     })();
 
+    // Set camera stream URL
+    const esp32Ip = CONFIG.ESP32_IP;
+    setStreamUrl(`http://${esp32Ip}:81/stream`);
+
     return () => {
       WebSocketService.off('connected', handleConnection);
       WebSocketService.off('data', handleData);
@@ -177,85 +235,84 @@ const DashboardScreen = () => {
         soundRef.current = null;
       }
     };
-  }, []);
+  }, [lang]);
 
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
-    // Simulate refresh delay
     setTimeout(() => {
       setRefreshing(false);
       setLastUpdate(new Date());
     }, 1000);
   }, []);
 
-  
-
-  const getSoilMoistureData = (value) => {
-    if (value < 300) return { status: 'Dry', color: '#FF6B6B', icon: '🏜️', level: (value / 300) * 100 };
-    if (value < 700) return { status: 'Optimal', color: '#51CF66', icon: '🌱', level: ((value - 300) / 400) * 100 + 100 };
-    return { status: 'Wet', color: '#339AF0', icon: '💧', level: 100 };
-  };
-
-  const getTemperatureColor = (temp) => {
-    if (temp < 20) return '#6BB6FF';
-    if (temp < 30) return '#51CF66';
-    return '#FF6B6B';
-  };
-
-  const formatTime = (date) => {
-    return date.toLocaleTimeString('en-US', { 
-      hour12: true, 
-      hour: 'numeric', 
-      minute: '2-digit' 
-    });
-  };
-
-  const soilData = getSoilMoistureData(sensorData.soilMoisture);
-
-  const sendQuickAction = (command, value) => {
+  // Command senders
+  const sendCommand = (command, value = 0) => {
     try {
       WebSocketService.send({ command, value, timestamp: Date.now() });
-      const labels = {
-        ROTATE_HEAD_LEFT: 'Rotate Head Left',
-        ROTATE_HEAD_RIGHT: 'Rotate Head Right',
-        ROTATE_HEAD_CENTER: 'Center Head',
-        SOUND_ALARM: 'Sound Alarm',
-        RESET_SYSTEM: 'Reset System',
-      };
-      Alert.alert('✅ Command Sent', `${labels[command] || command} triggered.`, [{ text: 'OK' }]);
-      // play full hawk only for SOUND_ALARM
-      if (command === 'SOUND_ALARM' && soundRef.current && !isMuted) {
-        (async () => {
-          try {
-            await soundRef.current.setVolumeAsync(volume);
-            await soundRef.current.setPositionAsync(0);
-            await soundRef.current.playAsync();
-          } catch (_) {}
-        })();
-      }
     } catch (e) {
-      Alert.alert('❌ Failed', 'Could not send command.', [{ text: 'OK' }]);
+      Alert.alert(
+        lang === 'tl' ? '❌ Nabigo' : '❌ Failed',
+        lang === 'tl' ? 'Hindi naipadala ang utos' : 'Could not send command',
+        [{ text: 'OK' }]
+      );
     }
   };
 
-  // ESP32 CAM Stream state
-  const [streamUrl, setStreamUrl] = useState('');
-  const [streamRefreshKey, setStreamRefreshKey] = useState(0);
+  // Audio commands
+  const playTrack = (track) => sendCommand('PLAY_TRACK', track);
+  const stopAudio = () => sendCommand('STOP_AUDIO');
+  const nextTrack = () => sendCommand('NEXT_TRACK');
+  const setAudioVolume = (vol) => sendCommand('SET_VOLUME', vol);
 
-  useEffect(() => {
-    // Set ESP32 CAM stream URL
-    const esp32Ip = CONFIG.ESP32_IP;
-    setStreamUrl(`http://${esp32Ip}:81/stream`);
-  }, []);
+  // Servo commands
+  const setLeftServo = (angle) => {
+    WebSocketService.send({ command: 'SET_SERVO_ANGLE', servo: 0, value: angle });
+  };
+  const setRightServo = (angle) => {
+    WebSocketService.send({ command: 'SET_SERVO_ANGLE', servo: 1, value: angle });
+  };
+  const toggleOscillation = () => sendCommand('TOGGLE_SERVO_OSCILLATION');
+
+  // Head rotation
+  const rotateLeft = () => sendCommand('ROTATE_HEAD_LEFT', 90);
+  const rotateCenter = () => sendCommand('ROTATE_HEAD_CENTER', 0);
+  const rotateRight = () => sendCommand('ROTATE_HEAD_RIGHT', -90);
+
+  // Emergency actions
+  const soundAlarm = () => {
+    sendCommand('SOUND_ALARM');
+    if (soundRef.current && !isMuted) {
+      (async () => {
+        try {
+          await soundRef.current.setVolumeAsync(volume);
+          await soundRef.current.setPositionAsync(0);
+          await soundRef.current.playAsync();
+        } catch (_) {}
+      })();
+    }
+  };
+  const restartSystem = () => sendCommand('RESET_SYSTEM');
+
+  const formatTime = (date) => {
+    return date.toLocaleTimeString('en-US', {
+      hour12: true,
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  };
 
   const refreshStream = () => {
     setStreamRefreshKey(prev => prev + 1);
   };
 
   return (
-    <ScrollView 
+    <ScrollView
       style={styles.container}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
     >
+      {/* Header */}
       <LinearGradient
         colors={['#667eea', '#764ba2']}
         style={styles.header}
@@ -265,8 +322,10 @@ const DashboardScreen = () => {
         <Animated.View style={{ opacity: fadeAnim }}>
           <View style={styles.headerContent}>
             <Text style={styles.title}>🤖 BantayBot</Text>
-            <Text style={styles.subtitle}>Smart Crop Protection</Text>
-            
+            <Text style={styles.subtitle}>
+              {lang === 'tl' ? 'Pangbantay ng Pananim' : 'Smart Crop Protection'}
+            </Text>
+
             <Animated.View style={[styles.connectionCard, { transform: [{ scale: pulseAnim }] }]}>
               <View style={styles.connectionRow}>
                 <View style={styles.connectionStatus}>
@@ -278,7 +337,10 @@ const DashboardScreen = () => {
                     shadowOffset: { width: 0, height: 2 }
                   }]} />
                   <Text style={styles.statusText}>
-                    {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+                    {isConnected
+                      ? (lang === 'tl' ? '🟢 Nakakonekta' : '🟢 Connected')
+                      : (lang === 'tl' ? '🔴 Walang koneksyon' : '🔴 Disconnected')
+                    }
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -296,7 +358,7 @@ const DashboardScreen = () => {
                 </TouchableOpacity>
               </View>
               <Text style={styles.lastUpdate}>
-                Last update: {formatTime(lastUpdate)}
+                {lang === 'tl' ? 'Huling update' : 'Last update'}: {formatTime(lastUpdate)}
               </Text>
             </Animated.View>
           </View>
@@ -304,15 +366,17 @@ const DashboardScreen = () => {
       </LinearGradient>
 
       <View style={styles.content}>
-        {/* ESP32 CAM Live Stream */}
+        {/* Camera Stream */}
         <View style={styles.streamCard}>
           <View style={styles.streamHeader}>
             <View style={styles.liveBadge}>
               <Text style={styles.liveDot}>●</Text>
-              <Text style={styles.liveText}>ESP32 CAM</Text>
+              <Text style={styles.liveText}>
+                {lang === 'tl' ? 'LIVE NA TINGNAN' : 'ESP32 CAM'}
+              </Text>
             </View>
             <TouchableOpacity onPress={refreshStream} style={styles.refreshButton}>
-              <Text style={styles.refreshText}>🔄 Refresh</Text>
+              <Text style={styles.refreshText}>🔄 {lang === 'tl' ? 'Refresh' : 'Refresh'}</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.streamBody}>
@@ -325,51 +389,47 @@ const DashboardScreen = () => {
                 onError={() => console.log('Stream error')}
               />
             ) : (
-              <Text style={styles.previewPlaceholder}>Loading camera...</Text>
+              <Text style={styles.previewPlaceholder}>
+                {lang === 'tl' ? 'Naglo-load ng camera...' : 'Loading camera...'}
+              </Text>
             )}
           </View>
           <View style={styles.streamInfo}>
             <Text style={styles.streamInfoText}>📡 {CONFIG.ESP32_IP}:81/stream</Text>
           </View>
         </View>
-        {/* Quick Actions */}
-        <View style={styles.quickSection}>
-          <Text style={styles.sectionTitle}>⚡ Quick Actions</Text>
-          <View style={styles.quickRow}>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#667eea' }]} onPress={() => sendQuickAction('ROTATE_HEAD_LEFT', 90)}>
-              <Text style={styles.quickButtonText}>⬅️ Turn Left</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#51CF66' }]} onPress={() => sendQuickAction('ROTATE_HEAD_CENTER', 0)}>
-              <Text style={styles.quickButtonText}>⏺️ Center</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#667eea' }]} onPress={() => sendQuickAction('ROTATE_HEAD_RIGHT', -90)}>
-              <Text style={styles.quickButtonText}>➡️ Turn Right</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.quickRow}>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#FF6B6B', flex: 1 }]} onPress={() => sendQuickAction('SOUND_ALARM')}>
-              <Text style={styles.quickButtonText}>📢 Sound Alarm</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#fa709a', flex: 1, marginLeft: 10 }]} onPress={() => sendQuickAction('RESET_SYSTEM')}>
-              <Text style={styles.quickButtonText}>🔄 Restart</Text>
-            </TouchableOpacity>
-          </View>
+
+        {/* RS485 Soil Sensor Card (NEW) */}
+        {sensorData.hasRS485Sensor && (
+          <SoilSensorCard
+            humidity={sensorData.soilHumidity}
+            temperature={sensorData.soilTemperature}
+            conductivity={sensorData.soilConductivity}
+            ph={sensorData.ph}
+            lang={lang}
+          />
+        )}
+
+        {/* Bird Detection Status */}
+        <View style={styles.birdSection}>
+          <StatusIndicator
+            status={sensorData.birdDetectionEnabled ? 'good' : 'warning'}
+            label={lang === 'tl' ? 'Pagbabantay ng Ibon' : 'Bird Detection'}
+            value={`${sensorData.birdsDetectedToday} ${lang === 'tl' ? 'ibon ngayong araw' : 'birds today'}`}
+            icon="🐦"
+            lang={lang}
+            size="medium"
+          />
         </View>
 
-        {/* Bird Detection Controls */}
+        {/* Detection Controls */}
         <DetectionControls
           detectionEnabled={sensorData.birdDetectionEnabled}
-          onDetectionToggle={() => {
-            sendQuickAction('TOGGLE_DETECTION');
-          }}
+          onDetectionToggle={() => sendCommand('TOGGLE_DETECTION')}
           sensitivity={sensorData.detectionSensitivity}
-          onSensitivityChange={(value) => {
-            sendQuickAction('SET_SENSITIVITY', value);
-          }}
+          onSensitivityChange={(value) => sendCommand('SET_SENSITIVITY', value)}
           birdsDetectedToday={sensorData.birdsDetectedToday}
-          onResetCount={() => {
-            sendQuickAction('RESET_BIRD_COUNT');
-          }}
+          onResetCount={() => sendCommand('RESET_BIRD_COUNT')}
           style={{ marginBottom: 15 }}
         />
 
@@ -379,118 +439,111 @@ const DashboardScreen = () => {
           contrast={cameraContrast}
           onBrightnessChange={(value) => {
             setCameraBrightness(value);
-            sendQuickAction('SET_BRIGHTNESS', value);
+            sendCommand('SET_BRIGHTNESS', value);
           }}
           onContrastChange={(value) => {
             setCameraContrast(value);
-            sendQuickAction('SET_CONTRAST', value);
+            sendCommand('SET_CONTRAST', value);
           }}
-          onResolutionChange={(value) => {
-            sendQuickAction('SET_RESOLUTION', value);
-          }}
+          onResolutionChange={(value) => sendCommand('SET_RESOLUTION', value)}
           grayscaleMode={grayscaleMode}
           onGrayscaleModeToggle={() => {
             setGrayscaleMode(!grayscaleMode);
-            sendQuickAction('TOGGLE_GRAYSCALE');
+            sendCommand('TOGGLE_GRAYSCALE');
           }}
           style={{ marginBottom: 15 }}
         />
 
-        {/* Sensor Cards Grid */}
-        <Animated.View style={[styles.sensorGrid, { opacity: fadeAnim }]}>
-          {/* Motion Detection Card */}
-          <View style={[styles.sensorCard, sensorData.motion && styles.alertCard]}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>
-                {sensorData.motion ? '🚨' : '👁️'}
-              </Text>
-              <Text style={styles.sensorLabel}>Motion</Text>
-            </View>
-            <Text style={[styles.sensorValue, { 
-              color: sensorData.motion ? '#FF6B6B' : '#51CF66' 
-            }]}>
-              {sensorData.motion ? 'DETECTED' : 'Clear'}
-            </Text>
-            {sensorData.motion && (
-              <View style={styles.alertBadge}>
-                <Text style={styles.alertText}>⚠️ ALERT</Text>
-              </View>
-            )}
-          </View>
+        {/* Audio Player Control (NEW) */}
+        {sensorData.hasDFPlayer && (
+          <AudioPlayerControl
+            currentTrack={sensorData.currentTrack}
+            totalTracks={7}
+            volume={sensorData.volume}
+            audioPlaying={sensorData.audioPlaying}
+            onPlay={() => playTrack(sensorData.currentTrack)}
+            onStop={stopAudio}
+            onNext={nextTrack}
+            onVolumeChange={setAudioVolume}
+            lang={lang}
+          />
+        )}
 
-          {/* Head Position Card */}
-          <View style={styles.sensorCard}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>🔄</Text>
-              <Text style={styles.sensorLabel}>Head Position</Text>
-            </View>
-            <Text style={styles.sensorValue}>{sensorData.headPosition}°</Text>
-            <Text style={styles.sensorUnit}>degrees</Text>
-            <View style={styles.progressBar}>
-              <View style={[styles.progressFill, {
-                width: `${((sensorData.headPosition + 180) / 360) * 100}%`,
-                backgroundColor: '#667eea'
-              }]} />
-            </View>
-          </View>
+        {/* Servo Arm Control (NEW) */}
+        {sensorData.hasServos && (
+          <ServoArmControl
+            leftArmAngle={sensorData.leftArmAngle}
+            rightArmAngle={sensorData.rightArmAngle}
+            oscillating={sensorData.oscillating}
+            onLeftChange={setLeftServo}
+            onRightChange={setRightServo}
+            onToggleOscillation={toggleOscillation}
+            lang={lang}
+          />
+        )}
 
-          {/* Temperature Card */}
-          <View style={styles.sensorCard}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>🌡️</Text>
-              <Text style={styles.sensorLabel}>Temperature</Text>
-            </View>
-            <Text style={[styles.sensorValue, { 
-              color: getTemperatureColor(sensorData.temperature) 
-            }]}>
-              {isFinite(sensorData.temperature) ? sensorData.temperature.toFixed(1) + '°' : 'N/A'}
-            </Text>
-            <Text style={styles.sensorUnit}>Celsius</Text>
+        {/* Head Direction Control */}
+        <View style={styles.headSection}>
+          <Text style={styles.sectionTitle}>
+            {lang === 'tl' ? '🔄 DIREKSYON NG ULO' : '🔄 HEAD DIRECTION'}
+          </Text>
+          <View style={styles.headControls}>
+            <QuickActionButton
+              icon="⬅️"
+              label={lang === 'tl' ? 'Pakaliwa' : 'Left'}
+              color="#667eea"
+              onPress={rotateLeft}
+              size="medium"
+              style={{ flex: 1, marginRight: 8 }}
+            />
+            <QuickActionButton
+              icon="⏺️"
+              label={lang === 'tl' ? 'Gitna' : 'Center'}
+              color="#51CF66"
+              onPress={rotateCenter}
+              size="medium"
+              style={{ flex: 1, marginHorizontal: 4 }}
+            />
+            <QuickActionButton
+              icon="➡️"
+              label={lang === 'tl' ? 'Pakanan' : 'Right'}
+              color="#667eea"
+              onPress={rotateRight}
+              size="medium"
+              style={{ flex: 1, marginLeft: 8 }}
+            />
           </View>
+          <Text style={styles.positionText}>
+            {lang === 'tl' ? 'Kasalukuyang posisyon' : 'Current position'}: {sensorData.headPosition}°
+          </Text>
+        </View>
 
-          {/* Humidity Card */}
-          <View style={styles.sensorCard}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>💨</Text>
-              <Text style={styles.sensorLabel}>Humidity</Text>
-            </View>
-            <Text style={styles.sensorValue}>{isFinite(sensorData.humidity) ? sensorData.humidity.toFixed(1) : 'N/A'}</Text>
-            <Text style={styles.sensorUnit}>percent</Text>
-            <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { 
-                width: `${isFinite(sensorData.humidity) ? Math.min(sensorData.humidity, 100) : 0}%`,
-                backgroundColor: '#339AF0'
-              }]} />
-            </View>
+        {/* Emergency Actions */}
+        <View style={styles.emergencySection}>
+          <Text style={styles.emergencyTitle}>
+            {lang === 'tl' ? '⚠️ MGA EMERGENCY AKSYON' : '⚠️ EMERGENCY ACTIONS'}
+          </Text>
+          <View style={styles.emergencyButtons}>
+            <QuickActionButton
+              icon="📢"
+              label={lang === 'tl' ? 'TUMUNOG NA!' : 'SCARE NOW!'}
+              sublabel={lang === 'tl' ? 'Takutin ang ibon' : 'Frighten birds'}
+              color="#FF6B6B"
+              onPress={soundAlarm}
+              size="large"
+              style={{ flex: 1, marginRight: 8 }}
+            />
+            <QuickActionButton
+              icon="🔄"
+              label={lang === 'tl' ? 'I-RESTART' : 'RESTART'}
+              sublabel={lang === 'tl' ? 'Reset system' : 'Reset system'}
+              color="#fa709a"
+              onPress={restartSystem}
+              size="large"
+              style={{ flex: 1, marginLeft: 8 }}
+            />
           </View>
-
-          {/* Soil Moisture Card - Full Width */}
-          <View style={[styles.sensorCard, styles.fullWidth, styles.soilCard]}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>{soilData.icon}</Text>
-              <Text style={styles.sensorLabel}>Soil Moisture</Text>
-            </View>
-            <View style={styles.soilContent}>
-              <View style={styles.soilStats}>
-                <Text style={[styles.sensorValue, { color: soilData.color }]}>
-                  {sensorData.soilMoisture}
-                </Text>
-                <Text style={styles.sensorUnit}>units</Text>
-              </View>
-              <View style={styles.soilStatus}>
-                <Text style={[styles.soilStatusText, { color: soilData.color }]}>
-                  {soilData.status}
-                </Text>
-                <View style={styles.soilProgressBar}>
-                  <View style={[styles.soilProgressFill, { 
-                    width: `${soilData.level}%`,
-                    backgroundColor: soilData.color
-                  }]} />
-                </View>
-              </View>
-            </View>
-          </View>
-        </Animated.View>
+        </View>
       </View>
     </ScrollView>
   );
@@ -595,20 +648,13 @@ const styles = StyleSheet.create({
     color: '#FF4757',
     fontWeight: '700',
   },
-  streamMeta: {
-    color: '#666',
-  },
   streamBody: {
-    height: 140,
+    height: 200,
     backgroundColor: '#F3F4F6',
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
-  },
-  reconnectingText: {
-    color: '#FF6B6B',
-    fontWeight: '700',
   },
   previewPlaceholder: {
     color: '#888',
@@ -641,162 +687,49 @@ const styles = StyleSheet.create({
     color: '#666',
     textAlign: 'center',
   },
-  quickSection: {
-    marginBottom: 20,
+  birdSection: {
+    marginBottom: 15,
   },
-  quickRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  quickButton: {
-    flex: 1,
-    marginRight: 10,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 3,
-  },
-  quickButtonText: {
-    color: 'white',
-    fontWeight: '700',
-  },
-  modeCard: {
-    backgroundColor: 'white',
-    borderRadius: 15,
-    padding: 20,
-    marginBottom: 20,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-  },
-  modeContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  modeInfo: {
-    flex: 1,
-  },
-  modeTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  modeDescription: {
-    fontSize: 14,
-    color: '#666',
-  },
-  switch: {
-    transform: [{ scaleX: 1.1 }, { scaleY: 1.1 }],
-  },
-  sensorGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  sensorCard: {
-    width: (width - 45) / 2,
+  headSection: {
     backgroundColor: 'white',
     borderRadius: 15,
     padding: 20,
     marginBottom: 15,
     elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
   },
-  fullWidth: {
-    width: width - 30,
-  },
-  alertCard: {
-    borderWidth: 2,
-    borderColor: '#FF6B6B',
-    backgroundColor: '#FFF5F5',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  sensorIcon: {
-    fontSize: 24,
-    marginRight: 8,
-  },
-  sensorLabel: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '500',
-  },
-  sensorValue: {
-    fontSize: 24,
+  sectionTitle: {
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: 2,
+    marginBottom: 15,
+    textAlign: 'center',
+    letterSpacing: 0.5,
   },
-  sensorUnit: {
-    fontSize: 12,
-    color: '#888',
-    marginBottom: 8,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  alertBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: '#FF6B6B',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  alertText: {
-    color: 'white',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  soilCard: {
-    minHeight: 120,
-  },
-  soilContent: {
+  headControls: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    marginVertical: 10,
   },
-  soilStats: {
-    alignItems: 'flex-start',
+  positionText: {
+    textAlign: 'center',
+    fontSize: 14,
+    color: '#666',
+    marginTop: 10,
+    fontWeight: '500',
   },
-  soilStatus: {
-    flex: 1,
-    marginLeft: 20,
+  emergencySection: {
+    marginVertical: 20,
+    marginBottom: 40,
   },
-  soilStatusText: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 8,
+  emergencyTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FF6B6B',
+    marginBottom: 15,
+    textAlign: 'center',
+    letterSpacing: 0.5,
   },
-  soilProgressBar: {
-    height: 8,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  soilProgressFill: {
-    height: '100%',
-    borderRadius: 4,
+  emergencyButtons: {
+    flexDirection: 'row',
   },
 });
 

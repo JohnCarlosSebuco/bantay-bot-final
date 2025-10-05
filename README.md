@@ -1,8 +1,12 @@
 # 🤖 BantayBot - Smart Crop Protection System
+## 🌾 Sistema ng Pangprotekta sa Pananim (Crop Protection System)
 
 A comprehensive IoT system combining ESP32-CAM hardware with a React Native mobile application for automated crop protection and monitoring.
 
+**Isang kompletong sistema para protektahan ang iyong pananim gamit ang ESP32-CAM at mobile app.**
+
 ## 📋 Table of Contents
+- [🇵🇭 Para sa mga Magsasaka (For Filipino Farmers)](#-para-sa-mga-magsasaka-for-filipino-farmers)
 - [System Overview](#system-overview)
 - [Hardware Components](#hardware-components)
 - [Mobile App Setup](#mobile-app-setup)
@@ -10,6 +14,232 @@ A comprehensive IoT system combining ESP32-CAM hardware with a React Native mobi
 - [Features](#features)
 - [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## 🇵🇭 Para sa mga Magsasaka (For Filipino Farmers)
+
+### Ano ang BantayBot?
+
+Ang **BantayBot** ay isang matalinong sistema para protektahan ang iyong pananim laban sa mga ibon at peste. Ginagamit nito ang:
+- 📹 **Camera** - Para tingnan ang taniman kahit saan ka
+- 🎵 **Tunog** - 7 iba't ibang tunog para takutin ang ibon
+- 🦾 **Gumagalaw na Braso** - Para mas mabisa ang pagtakot
+- 🌱 **Soil Sensor** - Sukatin ang lupa (pH, sustansya, halumigmig)
+- 📊 **Mobile App** - Kontrolin lahat gamit ang cellphone
+
+### Mga Pangunahing Feature (Main Features)
+
+#### ✅ Automatic na Pagprotekta (Automatic Protection)
+- Kusang nakakadetect ng ibon gamit ang camera
+- Automatic na tumutunog kapag may ibon
+- Gumagalaw ang mga braso para takutin pa lalo
+- Umiikot ang ulo (180°) para mas malawak ang saklaw
+
+#### ✅ Live Monitoring (Subaybayan Nang Live)
+- Tingnan ang taniman kahit nasa bahay ka
+- Real-time camera stream sa cellphone
+- Makita agad ang temperatura, halumigmig, at kalagayan ng lupa
+
+#### ✅ Advanced Soil Sensor (Modernong Soil Sensor)
+- **pH Level** - Alamin kung asido o alkaline ang lupa
+- **Konduktibidad** - Sukatin ang sustansya (fertilizer) sa lupa
+- **Halumigmig** - Alam kung kailangan ng tubig
+- **Temperatura** - Bantayan ang init ng lupa
+
+#### ✅ 7 Tunog Pantakot (7 Scare Sounds)
+- Iba't ibang tunog para hindi masanay ang ibon
+- Pwedeng i-adjust ang lakas (volume)
+- Play/Stop/Next controls sa app
+
+#### ✅ Predictive Analytics (Hulaan ang Ani)
+- **Inaasahang Petsa ng Ani** - Based sa temperatura at Growing Degree Days
+- **Tinatayang Dami ng Ani** - Prediction ng kilo based sa plot size
+- **Crop Health Score** - Overall na kalusugan ng tanim (0-100)
+- **Rainfall Tracking** - I-log ang ulan, alamin kung sapat ang tubig
+
+#### ✅ Bird Activity Analysis (Aktibidad ng Ibon)
+- Makita kung kailan pinakamaraming ibon (umaga/hapon)
+- Trend analysis (tumaas ba o bumaba ngayong linggo)
+- Detection history - ilan ibon per araw
+
+### Paano I-install (How to Install)
+
+#### Kailangan Muna (Requirements):
+1. **ESP32-CAM Module** - Main controller
+2. **Smartphone** - Android o iPhone (with Expo Go app)
+3. **WiFi Connection** - Para sa ESP32 at cellphone
+4. **12V Power Supply** - Para sa motor at speaker
+
+#### Step 1: I-download ang App
+```
+1. I-download ang "Expo Go" app sa Google Play o App Store
+2. I-install sa cellphone
+3. Siguruhing nakakonekta ang phone sa WiFi
+```
+
+#### Step 2: I-setup ang ESP32-CAM
+```
+1. I-download ang Arduino IDE sa computer
+2. I-install ang ESP32 Board Support
+3. Buksan ang "BantayBotUnified.ino" file
+4. Palitan ang WiFi name at password:
+
+   const char *ssid = "Pangalan_ng_WiFi";
+   const char *password = "Password_ng_WiFi";
+
+5. I-upload sa ESP32-CAM
+6. Buksan ang Serial Monitor, kopyanin ang IP address
+```
+
+#### Step 3: I-connect ang Mobile App
+```
+1. Sa computer, buksan ang project folder
+2. Buksan ang "src/config/config.js"
+3. Palitan ang ESP32_IP:
+
+   ESP32_IP: '192.168.1.28',  // Lagyan ng IP address ng ESP32
+
+4. Sa terminal, i-type: npm start
+5. Mag-lalabas ng QR code
+6. Sa cellphone, buksan ang Expo Go
+7. I-scan ang QR code
+8. Tapos na!
+```
+
+### Paano Gamitin (How to Use)
+
+#### Basic Operations (Mga Pangunahing Gamit):
+
+**1. Tingnan ang Taniman (View Farm)**
+- Buksan ang app
+- Makikita mo agad ang live camera
+- Swipe down para i-refresh
+
+**2. Takutin ang Ibon (Scare Birds)**
+- Pindot ang "📢 TUMUNOG NA!" button
+- O hayaan lang mag-automatic
+- Makikita mo sa history kung ilan na ibon
+
+**3. Sukatin ang Lupa (Check Soil)**
+- Titingnan mo agad sa dashboard:
+  - 💧 Halumigmig (Dry/Sakto/Wet)
+  - 🌡️ Temperatura (Malamig/Mabuti/Mainit)
+  - ⚡ Konduktibidad (Kulang/Sakto/Sobra sustansya)
+  - 🧪 pH Level (Asido/Balanse/Alkaline)
+
+**4. Kontrolin ang Ulo at Braso (Control Head & Arms)**
+- Ulo: Pindot Left/Center/Right
+- Braso: I-slide ang angle (0-180°)
+- O pindot "🔄 Gumalaw" para mag-oscillate
+
+**5. I-adjust ang Tunog (Adjust Sound)**
+- Piliin ang track (1-7)
+- I-adjust ang volume
+- Play/Stop/Next controls
+
+#### Advanced Features:
+
+**1. Mag-track ng Ani (Track Harvest)**
+```
+Analytics Tab → Harvest Planner
+- Lagyan ng crop type (Tomato/Rice/Corn/Eggplant)
+- Petsa ng pagtanim
+- Laki ng plot
+- Makikita ang predicted harvest date at yield
+```
+
+**2. I-log ang Ulan (Log Rainfall)**
+```
+Analytics Tab → Rainfall Tracker
+- Pindot "+ Idagdag Ulan Ngayon"
+- Lagyan ng amount (mm)
+- Makikita kung sapat ba ang tubig
+```
+
+**3. Bantayan ang Kalusugan (Monitor Health)**
+```
+Analytics Tab → Crop Health Monitor
+- Makikita ang overall score (0-100)
+- May recommendation kung ano dapat gawin
+- Color-coded: Green=Mabuti, Yellow=Bantayan, Red=Panganib
+```
+
+### Mga Tip para sa Magsasaka (Farmer Tips)
+
+#### Soil Sensor Tips:
+- ✅ **pH 5.5-7.5** = Sakto para sa karamihan ng tanim
+- ✅ **Conductivity 200-2000** = Sapat ang sustansya
+- ⚠️ **pH < 5.5** = Kailangan ng lime (pampalaki pH)
+- ⚠️ **pH > 7.5** = Kailangan ng sulfur (pampababa pH)
+- ⚠️ **Conductivity < 200** = Kailangan ng fertilizer
+- ⚠️ **Conductivity > 2000** = Sobra fertilizer, mag-flush ng tubig
+
+#### Bird Detection Tips:
+- 🕐 **Umaga (6-9 AM)** = Pinakamaraming ibon, bantayan
+- 🕒 **Hapon (3-5 PM)** = Pangalawang peak time
+- 🔄 **Palitan ang tunog** = Para hindi masanay ang ibon
+- 📊 **Tingnan ang history** = Alamin kung kailan dumarating
+
+#### Rainfall Tracking:
+- 💧 **>50mm per 30 days** = Sapat ang tubig
+- 💧 **20-50mm** = Kulang, bantayan
+- 💧 **<20mm** = Kritikal, kailangan ng irrigation
+
+### Troubleshooting sa Tagalog
+
+#### Hindi Kumokonekta (Won't Connect)
+```
+✅ Check: Pareho ba WiFi ng ESP32 at phone?
+✅ Check: Tama ba IP address sa config.js?
+✅ Try: Restart ESP32 (pindot Reset button)
+✅ Try: Restart app (close at buksan ulit)
+```
+
+#### Walang Tunog (No Sound)
+```
+✅ Check: Naka-mute ba? (Tingnan sa header)
+✅ Check: May SD card ba sa DFPlayer?
+✅ Check: Tama ba wiring ng speaker?
+✅ Try: I-adjust ang volume slider
+```
+
+#### Hindi Gumagalaw ang Servo (Servos Not Moving)
+```
+✅ Check: May power ba PCA9685? (external 5V)
+✅ Check: Tama ba I2C connections? (SDA=21, SCL=22)
+✅ Check: Common ground ba ESP32 at servo power?
+✅ Try: Pindot ang preset buttons (Rest/Alert/Wave)
+```
+
+#### Mali ang Soil Reading (Wrong Soil Reading)
+```
+✅ Check: Naka-calibrate ba sensor?
+✅ Check: Tama ba RS485 connections?
+✅ Try: Swap A at B terminals kung walang reading
+✅ Try: Restart system
+```
+
+### Mga Suportadong Pananim (Supported Crops)
+
+| Pananim | Base Temp | Required GDD | Optimal Temp | pH Range |
+|---------|-----------|--------------|--------------|----------|
+| 🍅 Kamatis | 10°C | 2200 | 18-28°C | 6.0-7.0 |
+| 🌾 Palay | 10°C | 3000 | 20-35°C | 5.5-6.5 |
+| 🌽 Mais | 10°C | 2700 | 18-32°C | 5.5-7.5 |
+| 🍆 Talong | 15°C | 1800 | 21-30°C | 5.5-6.5 |
+
+### Contact & Support
+
+**May tanong? May problema?**
+1. Basahin ang Troubleshooting section
+2. Tingnan ang History para sa errors
+3. Check ang Serial Monitor sa Arduino
+4. Kumuha ng screenshot, i-share sa technician
+
+**Maligayang Pagsasaka! 🌾🇵🇭**
+
+---
 
 ---
 
