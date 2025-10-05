@@ -3,6 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
 import DashboardScreen from './src/screens/DashboardScreen';
 import ControlsScreen from './src/screens/ControlsScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
@@ -46,7 +47,7 @@ export default function App() {
       <NavigationContainer>
         <StatusBar style="light" />
         <Tab.Navigator
-          screenOptions={{
+          screenOptions={({ route }) => ({
             headerShown: false,
             tabBarActiveTintColor: '#2196F3',
             tabBarInactiveTintColor: 'gray',
@@ -58,7 +59,24 @@ export default function App() {
               paddingTop: 5,
               height: 60,
             },
-          }}
+            tabBarIcon: ({ focused, color, size }) => {
+              let iconName;
+
+              if (route.name === 'Dashboard') {
+                iconName = focused ? 'home' : 'home-outline';
+              } else if (route.name === 'AnalyticsTab') {
+                iconName = focused ? 'stats-chart' : 'stats-chart-outline';
+              } else if (route.name === 'Controls') {
+                iconName = focused ? 'game-controller' : 'game-controller-outline';
+              } else if (route.name === 'Settings') {
+                iconName = focused ? 'settings' : 'settings-outline';
+              } else if (route.name === 'History') {
+                iconName = focused ? 'time' : 'time-outline';
+              }
+
+              return <Ionicons name={iconName} size={size} color={color} />;
+            },
+          })}
         >
         <Tab.Screen
           name="Dashboard"
