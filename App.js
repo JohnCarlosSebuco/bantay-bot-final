@@ -16,6 +16,7 @@ import CropHealthMonitorScreen from './src/screens/CropHealthMonitorScreen';
 import BirdAnalyticsScreen from './src/screens/BirdAnalyticsScreen';
 import ReportsScreen from './src/screens/ReportsScreen';
 import { LocaleContext, loadLang } from './src/i18n/i18n';
+import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -35,8 +36,10 @@ function AnalyticsStack() {
   );
 }
 
-export default function App() {
+// Main App Component with Navigation
+function AppContent() {
   const [lang, setLang] = React.useState('tl');
+  const { theme, isDark } = useTheme();
 
   React.useEffect(() => {
     (async () => setLang(await loadLang()))();
@@ -45,19 +48,24 @@ export default function App() {
   return (
     <LocaleContext.Provider value={{ lang, setLang }}>
       <NavigationContainer>
-        <StatusBar style="light" />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <Tab.Navigator
           screenOptions={({ route }) => ({
             headerShown: false,
-            tabBarActiveTintColor: '#2196F3',
-            tabBarInactiveTintColor: 'gray',
+            tabBarActiveTintColor: theme.colors.primary[500],
+            tabBarInactiveTintColor: theme.colors.text.tertiary,
             tabBarStyle: {
-              backgroundColor: 'white',
+              backgroundColor: theme.colors.surface.primary,
               borderTopWidth: 1,
-              borderTopColor: '#e0e0e0',
-              paddingBottom: 5,
-              paddingTop: 5,
+              borderTopColor: theme.colors.border.primary,
+              paddingBottom: theme.spacing[2],
+              paddingTop: theme.spacing[2],
               height: 60,
+              ...theme.shadows.sm,
+            },
+            tabBarLabelStyle: {
+              fontSize: theme.typography.fontSize.xs,
+              fontWeight: theme.typography.fontWeight.semibold,
             },
             tabBarIcon: ({ focused, color, size }) => {
               let iconName;
@@ -116,5 +124,14 @@ export default function App() {
         </Tab.Navigator>
       </NavigationContainer>
     </LocaleContext.Provider>
+  );
+}
+
+// Root App Component with Theme Provider
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   );
 }

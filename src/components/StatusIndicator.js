@@ -1,5 +1,6 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
+import { useTheme } from '../theme/ThemeContext';
 
 const StatusIndicator = ({
   status = 'good',  // 'good', 'warning', 'danger', 'info'
@@ -8,47 +9,84 @@ const StatusIndicator = ({
   icon,
   lang = 'tl',
   size = 'medium',  // 'small', 'medium', 'large'
+  animated = true, // Enable pulsing animation for live status
   style
 }) => {
+  const { theme } = useTheme();
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Fade in on mount
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: theme.animations.duration.moderate,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+
+  // Pulse animation for live status
+  useEffect(() => {
+    if (animated && (status === 'good' || status === 'danger')) {
+      const pulseAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.1,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulseAnimation.start();
+
+      return () => pulseAnimation.stop();
+    }
+  }, [status, animated]);
+
   const getStatusConfig = () => {
     switch (status) {
       case 'good':
         return {
-          color: '#51CF66',
-          bgColor: '#E8F5E9',
-          borderColor: '#51CF66',
+          color: theme.colors.success[500],
+          bgColor: theme.colors.success[50],
+          borderColor: theme.colors.success[500],
           statusIcon: '✅',
           statusText: lang === 'tl' ? 'Mabuti' : 'Good'
         };
       case 'warning':
         return {
-          color: '#FFA94D',
-          bgColor: '#FFF4E6',
-          borderColor: '#FFA94D',
+          color: theme.colors.warning[500],
+          bgColor: theme.colors.warning[50],
+          borderColor: theme.colors.warning[500],
           statusIcon: '⚠️',
           statusText: lang === 'tl' ? 'Bantayan' : 'Warning'
         };
       case 'danger':
         return {
-          color: '#FF6B6B',
-          bgColor: '#FFE5E5',
-          borderColor: '#FF6B6B',
+          color: theme.colors.error[500],
+          bgColor: theme.colors.error[50],
+          borderColor: theme.colors.error[500],
           statusIcon: '🔴',
           statusText: lang === 'tl' ? 'Panganib' : 'Danger'
         };
       case 'info':
         return {
-          color: '#339AF0',
-          bgColor: '#E3F2FD',
-          borderColor: '#339AF0',
+          color: theme.colors.info[500],
+          bgColor: theme.colors.info[50],
+          borderColor: theme.colors.info[500],
           statusIcon: 'ℹ️',
           statusText: lang === 'tl' ? 'Impormasyon' : 'Info'
         };
       default:
         return {
-          color: '#666',
-          bgColor: '#F5F5F5',
-          borderColor: '#E0E0E0',
+          color: theme.colors.text.secondary,
+          bgColor: theme.colors.background.secondary,
+          borderColor: theme.colors.border.primary,
           statusIcon: '⭕',
           statusText: lang === 'tl' ? 'Normal' : 'Normal'
         };
@@ -57,71 +95,121 @@ const StatusIndicator = ({
 
   const config = getStatusConfig();
 
-  const sizeStyles = {
+  const sizeConfig = {
     small: {
-      container: styles.containerSmall,
-      icon: styles.iconSmall,
-      label: styles.labelSmall,
-      value: styles.valueSmall,
-      status: styles.statusSmall,
+      padding: theme.spacing[2],
+      iconSize: theme.typography.fontSize['2xl'],
+      labelSize: theme.typography.fontSize.xs,
+      valueSize: theme.typography.fontSize.md,
+      statusSize: theme.typography.fontSize.xs,
+      borderRadius: theme.borderRadius.md,
     },
     medium: {
-      container: styles.containerMedium,
-      icon: styles.iconMedium,
-      label: styles.labelMedium,
-      value: styles.valueMedium,
-      status: styles.statusMedium,
+      padding: theme.spacing[3],
+      iconSize: theme.typography.fontSize['4xl'],
+      labelSize: theme.typography.fontSize.sm,
+      valueSize: theme.typography.fontSize.xl,
+      statusSize: theme.typography.fontSize.sm,
+      borderRadius: theme.borderRadius.lg,
     },
     large: {
-      container: styles.containerLarge,
-      icon: styles.iconLarge,
-      label: styles.labelLarge,
-      value: styles.valueLarge,
-      status: styles.statusLarge,
+      padding: theme.spacing[4],
+      iconSize: theme.typography.fontSize['5xl'],
+      labelSize: theme.typography.fontSize.md,
+      valueSize: theme.typography.fontSize['2xl'],
+      statusSize: theme.typography.fontSize.md,
+      borderRadius: theme.borderRadius.xl,
     },
   };
 
+  const sizeStyle = sizeConfig[size];
+
   return (
-    <View
+    <Animated.View
       style={[
         styles.container,
-        sizeStyles[size].container,
         {
           backgroundColor: config.bgColor,
           borderLeftColor: config.borderColor,
+          borderLeftWidth: 4,
+          borderRadius: sizeStyle.borderRadius,
+          padding: sizeStyle.padding,
+          ...theme.shadows.sm,
+          opacity: fadeAnim,
         },
         style
       ]}
     >
       {icon && (
-        <Text style={[styles.icon, sizeStyles[size].icon]}>
+        <Animated.Text
+          style={[
+            styles.icon,
+            {
+              fontSize: sizeStyle.iconSize,
+              marginRight: theme.spacing[3],
+              transform: [{ scale: pulseAnim }],
+            }
+          ]}
+        >
           {icon}
-        </Text>
+        </Animated.Text>
       )}
 
       <View style={styles.content}>
         {label && (
-          <Text style={[styles.label, sizeStyles[size].label]}>
+          <Text style={[
+            styles.label,
+            {
+              fontSize: sizeStyle.labelSize,
+              color: theme.colors.text.secondary,
+              fontWeight: theme.typography.fontWeight.medium,
+              marginBottom: theme.spacing[1],
+            }
+          ]}>
             {label}
           </Text>
         )}
 
         {value && (
-          <Text style={[styles.value, sizeStyles[size].value, { color: config.color }]}>
+          <Text style={[
+            styles.value,
+            {
+              fontSize: sizeStyle.valueSize,
+              color: config.color,
+              fontWeight: theme.typography.fontWeight.bold,
+              marginBottom: theme.spacing[1],
+            }
+          ]}>
             {value}
           </Text>
         )}
 
         <View style={styles.statusBadge}>
-          <Text style={[styles.statusIcon, sizeStyles[size].status]}>
+          <Animated.Text
+            style={[
+              styles.statusIcon,
+              {
+                fontSize: sizeStyle.statusSize,
+                marginRight: theme.spacing[1],
+                transform: [{ scale: pulseAnim }],
+              }
+            ]}
+          >
             {config.statusIcon}
-          </Text>
-          <Text style={[styles.statusText, sizeStyles[size].status, { color: config.color }]}>
+          </Animated.Text>
+          <Text style={[
+            styles.statusText,
+            {
+              fontSize: sizeStyle.statusSize,
+              color: config.color,
+              fontWeight: theme.typography.fontWeight.semibold,
+            }
+          ]}>
             {config.statusText}
           </Text>
         </View>
       </View>
-    </View>
+    </Animated.View>
   );
 };
 
@@ -129,79 +217,29 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 10,
-    borderLeftWidth: 4,
-    padding: 12,
-    marginVertical: 6,
-  },
-  containerSmall: {
-    padding: 8,
-  },
-  containerMedium: {
-    padding: 12,
-  },
-  containerLarge: {
-    padding: 16,
   },
   icon: {
-    marginRight: 12,
-  },
-  iconSmall: {
-    fontSize: 24,
-  },
-  iconMedium: {
-    fontSize: 32,
-  },
-  iconLarge: {
-    fontSize: 40,
+    textAlign: 'center',
   },
   content: {
     flex: 1,
+    justifyContent: 'center',
   },
   label: {
-    color: '#666',
-    marginBottom: 4,
-  },
-  labelSmall: {
-    fontSize: 12,
-  },
-  labelMedium: {
-    fontSize: 14,
-  },
-  labelLarge: {
-    fontSize: 16,
+    // Styles applied dynamically
   },
   value: {
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  valueSmall: {
-    fontSize: 16,
-  },
-  valueMedium: {
-    fontSize: 20,
-  },
-  valueLarge: {
-    fontSize: 24,
+    // Styles applied dynamically
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   statusIcon: {
-    marginRight: 4,
+    // Styles applied dynamically
   },
   statusText: {
-    fontWeight: '600',
-  },
-  statusSmall: {
-    fontSize: 10,
-  },
-  statusMedium: {
-    fontSize: 12,
-  },
-  statusLarge: {
-    fontSize: 14,
+    // Styles applied dynamically
   },
 });
 
