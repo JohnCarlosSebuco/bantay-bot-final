@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,70 +7,149 @@ import {
   Alert,
   Animated,
   Dimensions,
-  TouchableOpacity
+  TouchableOpacity,
+  Image,
+  RefreshControl
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import WebSocketService from '../services/WebSocketService';
 import { Audio } from 'expo-av';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { CONFIG } from '../config/config';
+import { LocaleContext } from '../i18n/i18n';
+import { useTheme } from '../theme/ThemeContext';
+
+// Import components
+import SoilSensorCard from '../components/SoilSensorCard';
+import AudioPlayerControl from '../components/AudioPlayerControl';
+import ServoArmControl from '../components/ServoArmControl';
+import StatusIndicator from '../components/StatusIndicator';
+import QuickActionButton from '../components/QuickActionButton';
+import CameraSettings from '../components/CameraSettings';
+import DetectionControls from '../components/DetectionControls';
+import detectionHistoryService from '../services/DetectionHistoryService';
 
 const { width } = Dimensions.get('window');
 
 const DashboardScreen = () => {
+  const { lang } = useContext(LocaleContext);
+  const { theme, isDark } = useTheme();
   const [isConnected, setIsConnected] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Sensor data state
   const [sensorData, setSensorData] = useState({
     motion: 0,
-    distance: 0,
-    temperature: 0,
-    humidity: 0,
-    soilMoisture: 0
+    headPosition: 0,
+    dhtTemperature: 0,
+    dhtHumidity: 0,
+    soilHumidity: 0,
+    soilTemperature: 0,
+    soilConductivity: 0,
+    ph: 7.0,
+    currentTrack: 1,
+    volume: 20,
+    audioPlaying: false,
+    leftArmAngle: 90,
+    rightArmAngle: 90,
+    oscillating: false,
+    birdDetectionEnabled: true,
+    birdsDetectedToday: 0,
+    detectionSensitivity: 2,
+    hasDFPlayer: false,
+    hasRS485Sensor: false,
+    hasServos: false,
   });
+
   const [lastUpdate, setLastUpdate] = useState(new Date());
-  
-  // Animation values (persist across renders)
-  const pulseAnim = React.useRef(new Animated.Value(1)).current;
-  const fadeAnim = React.useRef(new Animated.Value(0)).current;
-  const soundRef = React.useRef(null);
-  const lastBeepAtRef = React.useRef(0);
-  const [isMuted] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const soundRef = useRef(null);
+  const lastBeepAtRef = useRef(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(1.0);
+  const [cameraBrightness, setCameraBrightness] = useState(0);
+  const [cameraContrast, setCameraContrast] = useState(0);
+  const [grayscaleMode, setGrayscaleMode] = useState(false);
+  const [streamUrl, setStreamUrl] = useState('');
+  const [streamRefreshKey, setStreamRefreshKey] = useState(0);
 
   useEffect(() => {
-    // Fade in animation on mount
+    const loadAudioSettings = async () => {
+      try {
+        const savedVolume = await AsyncStorage.getItem('volume');
+        const savedMuted = await AsyncStorage.getItem('is_muted');
+        if (savedVolume !== null) setVolume(parseFloat(savedVolume));
+        if (savedMuted !== null) setIsMuted(JSON.parse(savedMuted));
+      } catch (error) {
+        console.log('Error loading audio settings:', error);
+      }
+    };
+    loadAudioSettings();
+
     Animated.timing(fadeAnim, {
       toValue: 1,
-      duration: 800,
+      duration: theme.animations.duration.slow,
       useNativeDriver: true,
     }).start();
 
     const handleConnection = (connected) => {
       setIsConnected(connected);
-      // Pulse animation when connection changes
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.2, duration: 200, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 200, useNativeDriver: true })
-      ]).start();
+      if (connected) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
     };
 
     const handleData = (data) => {
       const safeNumber = (v, fallback = 0) => (typeof v === 'number' && isFinite(v) ? v : fallback);
-      const motion = data && (data.motion ? 1 : 0);
-      const distance = safeNumber(data?.distance, -1);
-      const temperature = safeNumber(data?.temperature, 0);
-      const humidity = safeNumber(data?.humidity, 0);
-      const soilMoisture = safeNumber(data?.soilMoisture, 0);
-
-      setSensorData({ motion, distance, temperature, humidity, soilMoisture });
+      setSensorData({
+        motion: data?.motion ? 1 : 0,
+        headPosition: safeNumber(data?.headPosition, 0),
+        dhtTemperature: safeNumber(data?.dhtTemperature, 0),
+        dhtHumidity: safeNumber(data?.dhtHumidity, 0),
+        soilHumidity: safeNumber(data?.soilHumidity, 0),
+        soilTemperature: safeNumber(data?.soilTemperature, 0),
+        soilConductivity: safeNumber(data?.soilConductivity, 0),
+        ph: safeNumber(data?.ph, 7.0),
+        currentTrack: safeNumber(data?.currentTrack, 1),
+        volume: safeNumber(data?.volume, 20),
+        audioPlaying: data?.audioPlaying || false,
+        leftArmAngle: safeNumber(data?.leftArmAngle, 90),
+        rightArmAngle: safeNumber(data?.rightArmAngle, 90),
+        oscillating: data?.oscillating || false,
+        birdDetectionEnabled: data?.birdDetectionEnabled !== undefined ? data.birdDetectionEnabled : true,
+        birdsDetectedToday: safeNumber(data?.birdsDetectedToday, 0),
+        detectionSensitivity: safeNumber(data?.detectionSensitivity, 2),
+        hasDFPlayer: data?.hasDFPlayer || false,
+        hasRS485Sensor: data?.hasRS485Sensor || false,
+        hasServos: data?.hasServos || false,
+      });
       setLastUpdate(new Date());
     };
 
     const handleAlert = async (alert) => {
-      Alert.alert(
-        `🚨 ${alert.type.toUpperCase()}`,
-        alert.message,
-        [{ text: 'OK', style: 'default' }],
-        { cancelable: true }
-      );
-      // Debounced 1.5s hawk beep on alert
+      if (alert.type === 'bird_detection') {
+        await detectionHistoryService.addDetection({
+          type: 'bird',
+          message: alert.message,
+          count: alert.count || 1,
+        });
+        Alert.alert(
+          lang === 'tl' ? 'Nadetect ang Ibon!' : 'Bird Detected!',
+          `${alert.message}\n${lang === 'tl' ? 'Kabuuan ngayong araw' : 'Total today'}: ${alert.count}`,
+          [{ text: 'OK', style: 'default' }],
+          { cancelable: true }
+        );
+      } else {
+        Alert.alert(
+          alert.type.toUpperCase(),
+          alert.message,
+          [{ text: 'OK', style: 'default' }],
+          { cancelable: true }
+        );
+      }
+
       try {
         const now = Date.now();
         if (now - lastBeepAtRef.current < 1500) return;
@@ -87,10 +166,8 @@ const DashboardScreen = () => {
     WebSocketService.on('connected', handleConnection);
     WebSocketService.on('data', handleData);
     WebSocketService.on('alert', handleAlert);
-
     WebSocketService.connect();
 
-    // Configure audio and preload hawk sound
     (async () => {
       try {
         await Audio.setAudioModeAsync({
@@ -101,11 +178,14 @@ const DashboardScreen = () => {
         });
         const { sound } = await Audio.Sound.createAsync(
           require('../../assets/Hawk.mp3'),
-          { shouldPlay: false, volume: 1.0 }
+          { shouldPlay: false, volume: isMuted ? 0 : volume }
         );
         soundRef.current = sound;
       } catch (_) {}
     })();
+
+    const esp32Ip = CONFIG.ESP32_IP;
+    setStreamUrl(`http://${esp32Ip}:81/stream`);
 
     return () => {
       WebSocketService.off('connected', handleConnection);
@@ -117,556 +197,562 @@ const DashboardScreen = () => {
         soundRef.current = null;
       }
     };
-  }, []);
+  }, [lang]);
 
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
-    // Simulate refresh delay
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setTimeout(() => {
       setRefreshing(false);
       setLastUpdate(new Date());
     }, 1000);
   }, []);
 
-  
-
-  const getSoilMoistureData = (value) => {
-    if (value < 300) return { status: 'Dry', color: '#FF6B6B', icon: '🏜️', level: (value / 300) * 100 };
-    if (value < 700) return { status: 'Optimal', color: '#51CF66', icon: '🌱', level: ((value - 300) / 400) * 100 + 100 };
-    return { status: 'Wet', color: '#339AF0', icon: '💧', level: 100 };
-  };
-
-  const getTemperatureColor = (temp) => {
-    if (temp < 20) return '#6BB6FF';
-    if (temp < 30) return '#51CF66';
-    return '#FF6B6B';
-  };
-
-  const formatTime = (date) => {
-    return date.toLocaleTimeString('en-US', { 
-      hour12: true, 
-      hour: 'numeric', 
-      minute: '2-digit' 
-    });
-  };
-
-  const soilData = getSoilMoistureData(sensorData.soilMoisture);
-
-  const sendQuickAction = (command) => {
+  const sendCommand = (command, value = 0) => {
     try {
-      WebSocketService.send({ command, timestamp: Date.now() });
-      const labels = {
-        MOVE_ARMS: 'Move Arms',
-        SOUND_ALARM: 'Sound Alarm',
-        RESET_SYSTEM: 'Reset System',
-      };
-      Alert.alert('✅ Command Sent', `${labels[command] || command} triggered.`, [{ text: 'OK' }]);
-      // play full hawk only for SOUND_ALARM
-      if (command === 'SOUND_ALARM' && soundRef.current && !isMuted) {
-        (async () => {
-          try {
-            await soundRef.current.setPositionAsync(0);
-            await soundRef.current.playAsync();
-          } catch (_) {}
-        })();
-      }
+      WebSocketService.send({ command, value, timestamp: Date.now() });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (e) {
-      Alert.alert('❌ Failed', 'Could not send command.', [{ text: 'OK' }]);
+      Alert.alert(
+        lang === 'tl' ? 'Nabigo' : 'Failed',
+        lang === 'tl' ? 'Hindi naipadala ang utos' : 'Could not send command',
+        [{ text: 'OK' }]
+      );
     }
   };
 
-  // Stream mock state
-  const [isStreamConnected, setIsStreamConnected] = useState(false);
-  const [isReconnecting, setIsReconnecting] = useState(false);
-  const [bitrateKbps, setBitrateKbps] = useState(850);
-  const [latencyMs, setLatencyMs] = useState(120);
-
-  const connectStream = () => {
-    setIsReconnecting(true);
-    setTimeout(() => {
-      setIsReconnecting(false);
-      setIsStreamConnected(true);
-      setBitrateKbps(800 + Math.round(Math.random() * 400));
-      setLatencyMs(80 + Math.round(Math.random() * 120));
-    }, 1200);
+  const playTrack = (track) => sendCommand('PLAY_TRACK', track);
+  const stopAudio = () => sendCommand('STOP_AUDIO');
+  const nextTrack = () => sendCommand('NEXT_TRACK');
+  const setAudioVolume = (vol) => sendCommand('SET_VOLUME', vol);
+  const setLeftServo = (angle) => WebSocketService.send({ command: 'SET_SERVO_ANGLE', servo: 0, value: angle });
+  const setRightServo = (angle) => WebSocketService.send({ command: 'SET_SERVO_ANGLE', servo: 1, value: angle });
+  const toggleOscillation = () => sendCommand('TOGGLE_SERVO_OSCILLATION');
+  const rotateLeft = () => sendCommand('ROTATE_HEAD_LEFT', 90);
+  const rotateCenter = () => sendCommand('ROTATE_HEAD_CENTER', 0);
+  const rotateRight = () => sendCommand('ROTATE_HEAD_RIGHT', -90);
+  const soundAlarm = () => {
+    sendCommand('SOUND_ALARM');
+    if (soundRef.current && !isMuted) {
+      (async () => {
+        try {
+          await soundRef.current.setVolumeAsync(volume);
+          await soundRef.current.setPositionAsync(0);
+          await soundRef.current.playAsync();
+        } catch (_) {}
+      })();
+    }
+  };
+  const restartSystem = () => sendCommand('RESET_SYSTEM');
+  const refreshStream = () => {
+    setStreamRefreshKey(prev => prev + 1);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const disconnectStream = () => {
-    setIsStreamConnected(false);
+  const formatTime = (date) => {
+    return date.toLocaleTimeString('en-US', {
+      hour12: true,
+      hour: 'numeric',
+      minute: '2-digit'
+    });
   };
 
-  const simulateReconnect = () => {
-    if (!isStreamConnected) return;
-    setIsReconnecting(true);
-    setTimeout(() => {
-      setIsReconnecting(false);
-      setBitrateKbps(700 + Math.round(Math.random() * 300));
-      setLatencyMs(100 + Math.round(Math.random() * 150));
-    }, 1200);
-  };
+  const styles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background.primary,
+    },
+    header: {
+      paddingTop: 60,
+      paddingBottom: theme.spacing[6],
+      paddingHorizontal: theme.spacing[4],
+      backgroundColor: theme.colors.background.primary,
+    },
+    headerTop: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.spacing[6],
+    },
+    brandSection: {
+      flex: 1,
+    },
+    brandRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: theme.spacing[1],
+    },
+    logoIcon: {
+      marginRight: theme.spacing[2],
+    },
+    title: {
+      fontSize: theme.typography.fontSize['3xl'],
+      fontWeight: theme.typography.fontWeight.bold,
+      color: theme.colors.text.primary,
+      letterSpacing: -0.5,
+    },
+    subtitle: {
+      fontSize: theme.typography.fontSize.sm,
+      color: theme.colors.text.secondary,
+      fontWeight: theme.typography.fontWeight.medium,
+      marginTop: theme.spacing[1],
+    },
+    statusBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: isConnected ? theme.colors.success[50] : theme.colors.error[50],
+      paddingHorizontal: theme.spacing[3],
+      paddingVertical: theme.spacing[2],
+      borderRadius: theme.borderRadius.full,
+      ...theme.shadows.sm,
+    },
+    statusDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: isConnected ? theme.colors.success[500] : theme.colors.error[500],
+      marginRight: theme.spacing[2],
+    },
+    statusText: {
+      fontSize: theme.typography.fontSize.xs,
+      fontWeight: theme.typography.fontWeight.semibold,
+      color: isConnected ? theme.colors.success[700] : theme.colors.error[700],
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    statsRow: {
+      flexDirection: 'row',
+      marginBottom: theme.spacing[4],
+    },
+    statCard: {
+      flex: 1,
+      backgroundColor: theme.colors.surface.primary,
+      borderRadius: theme.borderRadius.lg,
+      padding: theme.spacing[4],
+      marginHorizontal: theme.spacing[1],
+      ...theme.shadows.sm,
+      borderWidth: 1,
+      borderColor: theme.colors.border.primary,
+    },
+    statIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: theme.spacing[2],
+    },
+    statValue: {
+      fontSize: theme.typography.fontSize['2xl'],
+      fontWeight: theme.typography.fontWeight.bold,
+      color: theme.colors.text.primary,
+      marginBottom: theme.spacing[1],
+    },
+    statLabel: {
+      fontSize: theme.typography.fontSize.xs,
+      color: theme.colors.text.tertiary,
+      fontWeight: theme.typography.fontWeight.medium,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    content: {
+      padding: theme.spacing[4],
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.spacing[3],
+    },
+    sectionTitle: {
+      fontSize: theme.typography.fontSize.lg,
+      fontWeight: theme.typography.fontWeight.bold,
+      color: theme.colors.text.primary,
+    },
+    sectionAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    sectionActionText: {
+      fontSize: theme.typography.fontSize.sm,
+      color: theme.colors.primary[500],
+      fontWeight: theme.typography.fontWeight.semibold,
+      marginRight: theme.spacing[1],
+    },
+    cameraCard: {
+      backgroundColor: theme.colors.surface.primary,
+      borderRadius: theme.borderRadius.xl,
+      padding: theme.spacing[4],
+      marginBottom: theme.spacing[4],
+      ...theme.shadows.md,
+      borderWidth: 1,
+      borderColor: theme.colors.border.primary,
+    },
+    cameraHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.spacing[3],
+    },
+    liveBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.colors.error[50],
+      paddingHorizontal: theme.spacing[2],
+      paddingVertical: theme.spacing[1],
+      borderRadius: theme.borderRadius.md,
+    },
+    liveDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: theme.colors.error[500],
+      marginRight: theme.spacing[2],
+    },
+    liveText: {
+      fontSize: theme.typography.fontSize.xs,
+      fontWeight: theme.typography.fontWeight.bold,
+      color: theme.colors.error[700],
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    refreshButton: {
+      padding: theme.spacing[2],
+      borderRadius: theme.borderRadius.md,
+      backgroundColor: theme.colors.background.secondary,
+    },
+    streamContainer: {
+      borderRadius: theme.borderRadius.lg,
+      overflow: 'hidden',
+      backgroundColor: theme.colors.background.tertiary,
+      aspectRatio: 16 / 9,
+      marginBottom: theme.spacing[3],
+    },
+    streamImage: {
+      width: '100%',
+      height: '100%',
+    },
+    streamPlaceholder: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    streamPlaceholderText: {
+      fontSize: theme.typography.fontSize.sm,
+      color: theme.colors.text.tertiary,
+      marginTop: theme.spacing[2],
+    },
+    streamInfo: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingTop: theme.spacing[3],
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border.secondary,
+    },
+    streamInfoText: {
+      fontSize: theme.typography.fontSize.xs,
+      color: theme.colors.text.tertiary,
+      fontFamily: theme.typography.fonts.mono,
+    },
+    section: {
+      marginBottom: theme.spacing[4],
+    },
+    controlsGrid: {
+      flexDirection: 'row',
+      gap: theme.spacing[2],
+    },
+    emergencyCard: {
+      backgroundColor: theme.colors.error[50],
+      borderRadius: theme.borderRadius.xl,
+      padding: theme.spacing[4],
+      marginBottom: theme.spacing[6],
+      borderWidth: 2,
+      borderColor: theme.colors.error[200],
+    },
+    emergencyHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: theme.spacing[3],
+    },
+    emergencyTitle: {
+      fontSize: theme.typography.fontSize.md,
+      fontWeight: theme.typography.fontWeight.bold,
+      color: theme.colors.error[700],
+      marginLeft: theme.spacing[2],
+    },
+    emergencyButtons: {
+      flexDirection: 'row',
+      gap: theme.spacing[2],
+    },
+  });
 
   return (
-    <ScrollView 
+    <ScrollView
       style={styles.container}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor={theme.colors.primary[500]}
+          colors={[theme.colors.primary[500]]}
+        />
+      }
+      showsVerticalScrollIndicator={false}
     >
-      <LinearGradient
-        colors={['#667eea', '#764ba2']}
-        style={styles.header}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
-        <Animated.View style={{ opacity: fadeAnim }}>
-          <View style={styles.headerContent}>
-            <Text style={styles.title}>🤖 BantayBot</Text>
-            <Text style={styles.subtitle}>Smart Crop Protection</Text>
-            
-            <Animated.View style={[styles.connectionCard, { transform: [{ scale: pulseAnim }] }]}>
-              <View style={styles.connectionStatus}>
-                <View style={[styles.statusDot, { 
-                  backgroundColor: isConnected ? '#51CF66' : '#FF6B6B',
-                  shadowColor: isConnected ? '#51CF66' : '#FF6B6B',
-                  shadowOpacity: 0.8,
-                  shadowRadius: 4,
-                  shadowOffset: { width: 0, height: 2 }
-                }]} />
-                <Text style={styles.statusText}>
-                  {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
-                </Text>
+      <Animated.View style={{ opacity: fadeAnim }}>
+        {/* Modern Header */}
+        <View style={styles.header}>
+          <View style={styles.headerTop}>
+            <View style={styles.brandSection}>
+              <View style={styles.brandRow}>
+                <Ionicons
+                  name="shield-checkmark"
+                  size={28}
+                  color={theme.colors.primary[500]}
+                  style={styles.logoIcon}
+                />
+                <Text style={styles.title}>BantayBot</Text>
               </View>
-              <Text style={styles.lastUpdate}>
-                Last update: {formatTime(lastUpdate)}
+              <Text style={styles.subtitle}>
+                {lang === 'tl' ? 'Pangbantay ng Pananim' : 'Smart Crop Protection'}
               </Text>
-            </Animated.View>
-          </View>
-        </Animated.View>
-      </LinearGradient>
-
-      <View style={styles.content}>
-        {/* Live Stream (Mock) */}
-        <View style={styles.streamCard}>
-          <View style={styles.streamHeader}>
-            <View style={styles.liveBadge}>
-              <Text style={styles.liveDot}>●</Text>
-              <Text style={styles.liveText}>LIVE</Text>
             </View>
-            {isStreamConnected ? (
-              <Text style={styles.streamMeta}>{bitrateKbps} kbps · {latencyMs} ms</Text>
-            ) : (
-              <Text style={styles.streamMeta}>Disconnected</Text>
-            )}
-          </View>
-          <View style={styles.streamBody}>
-            {isReconnecting ? (
-              <Text style={styles.reconnectingText}>Reconnecting…</Text>
-            ) : (
-              <Text style={styles.previewPlaceholder}>
-                {isStreamConnected ? 'Stream active (mock preview)' : 'No preview available'}
+            <View style={styles.statusBadge}>
+              <View style={styles.statusDot} />
+              <Text style={styles.statusText}>
+                {isConnected ? (lang === 'tl' ? 'Konektado' : 'Connected') : (lang === 'tl' ? 'Offline' : 'Offline')}
               </Text>
-            )}
+            </View>
           </View>
-          <View style={styles.streamActions}>
-            {isStreamConnected ? (
-              <TouchableOpacity style={[styles.streamButton, { backgroundColor: '#FF6B6B' }]} onPress={disconnectStream}>
-                <Text style={styles.streamButtonText}>Disconnect</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={[styles.streamButton, { backgroundColor: '#51CF66' }]} onPress={connectStream}>
-                <Text style={styles.streamButtonText}>Connect</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity style={[styles.streamButton, { backgroundColor: '#339AF0' }]} onPress={simulateReconnect}>
-              <Text style={styles.streamButtonText}>Simulate Reconnect</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-        {/* Quick Actions */}
-        <View style={styles.quickSection}>
-          <Text style={styles.sectionTitle}>⚡ Quick Actions</Text>
-          <View style={styles.quickRow}>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#667eea' }]} onPress={() => sendQuickAction('MOVE_ARMS')}>
-              <Text style={styles.quickButtonText}>🤖 Move Arms</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#FF6B6B' }]} onPress={() => sendQuickAction('SOUND_ALARM')}>
-              <Text style={styles.quickButtonText}>📢 Make Sound</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.quickButton, { backgroundColor: '#fa709a' }]} onPress={() => sendQuickAction('RESET_SYSTEM')}>
-              <Text style={styles.quickButtonText}>🔄 Restart</Text>
-            </TouchableOpacity>
+
+          {/* Quick Stats */}
+          <View style={styles.statsRow}>
+            <View style={styles.statCard}>
+              <View style={[styles.statIcon, { backgroundColor: theme.colors.primary[50] }]}>
+                <Ionicons name="git-network-outline" size={20} color={theme.colors.primary[500]} />
+              </View>
+              <Text style={styles.statValue}>{sensorData.birdsDetectedToday}</Text>
+              <Text style={styles.statLabel}>{lang === 'tl' ? 'Ibon' : 'Birds'}</Text>
+            </View>
+            <View style={styles.statCard}>
+              <View style={[styles.statIcon, { backgroundColor: theme.colors.success[50] }]}>
+                <Ionicons name="leaf-outline" size={20} color={theme.colors.success[500]} />
+              </View>
+              <Text style={styles.statValue}>{sensorData.ph.toFixed(1)}</Text>
+              <Text style={styles.statLabel}>pH</Text>
+            </View>
+            <View style={styles.statCard}>
+              <View style={[styles.statIcon, { backgroundColor: theme.colors.info[50] }]}>
+                <Ionicons name="water-outline" size={20} color={theme.colors.info[500]} />
+              </View>
+              <Text style={styles.statValue}>{sensorData.soilHumidity}%</Text>
+              <Text style={styles.statLabel}>{lang === 'tl' ? 'Lupa' : 'Soil'}</Text>
+            </View>
           </View>
         </View>
 
-        {/* Sensor Cards Grid */}
-        <Animated.View style={[styles.sensorGrid, { opacity: fadeAnim }]}>
-          {/* Motion Detection Card */}
-          <View style={[styles.sensorCard, sensorData.motion && styles.alertCard]}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>
-                {sensorData.motion ? '🚨' : '👁️'}
+        <View style={styles.content}>
+          {/* Live Camera Feed */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>
+                {lang === 'tl' ? 'Kamera' : 'Live Camera'}
               </Text>
-              <Text style={styles.sensorLabel}>Motion</Text>
+              <TouchableOpacity onPress={refreshStream} style={styles.refreshButton}>
+                <Ionicons name="refresh" size={18} color={theme.colors.text.secondary} />
+              </TouchableOpacity>
             </View>
-            <Text style={[styles.sensorValue, { 
-              color: sensorData.motion ? '#FF6B6B' : '#51CF66' 
-            }]}>
-              {sensorData.motion ? 'DETECTED' : 'Clear'}
-            </Text>
-            {sensorData.motion && (
-              <View style={styles.alertBadge}>
-                <Text style={styles.alertText}>⚠️ ALERT</Text>
-              </View>
-            )}
-          </View>
 
-          {/* Distance Card */}
-          <View style={styles.sensorCard}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>📏</Text>
-              <Text style={styles.sensorLabel}>Distance</Text>
-            </View>
-            <Text style={styles.sensorValue}>{sensorData.distance >= 0 ? sensorData.distance : 'N/A'}</Text>
-            <Text style={styles.sensorUnit}>centimeters</Text>
-            <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { 
-                width: `${sensorData.distance >= 0 ? Math.min((sensorData.distance / 100) * 100, 100) : 0}%`,
-                backgroundColor: sensorData.distance >= 0 && sensorData.distance < 20 ? '#FF6B6B' : '#51CF66'
-              }]} />
-            </View>
-          </View>
-
-          {/* Temperature Card */}
-          <View style={styles.sensorCard}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>🌡️</Text>
-              <Text style={styles.sensorLabel}>Temperature</Text>
-            </View>
-            <Text style={[styles.sensorValue, { 
-              color: getTemperatureColor(sensorData.temperature) 
-            }]}>
-              {isFinite(sensorData.temperature) ? sensorData.temperature.toFixed(1) + '°' : 'N/A'}
-            </Text>
-            <Text style={styles.sensorUnit}>Celsius</Text>
-          </View>
-
-          {/* Humidity Card */}
-          <View style={styles.sensorCard}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>💨</Text>
-              <Text style={styles.sensorLabel}>Humidity</Text>
-            </View>
-            <Text style={styles.sensorValue}>{isFinite(sensorData.humidity) ? sensorData.humidity.toFixed(1) : 'N/A'}</Text>
-            <Text style={styles.sensorUnit}>percent</Text>
-            <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { 
-                width: `${isFinite(sensorData.humidity) ? Math.min(sensorData.humidity, 100) : 0}%`,
-                backgroundColor: '#339AF0'
-              }]} />
-            </View>
-          </View>
-
-          {/* Soil Moisture Card - Full Width */}
-          <View style={[styles.sensorCard, styles.fullWidth, styles.soilCard]}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sensorIcon}>{soilData.icon}</Text>
-              <Text style={styles.sensorLabel}>Soil Moisture</Text>
-            </View>
-            <View style={styles.soilContent}>
-              <View style={styles.soilStats}>
-                <Text style={[styles.sensorValue, { color: soilData.color }]}>
-                  {sensorData.soilMoisture}
-                </Text>
-                <Text style={styles.sensorUnit}>units</Text>
-              </View>
-              <View style={styles.soilStatus}>
-                <Text style={[styles.soilStatusText, { color: soilData.color }]}>
-                  {soilData.status}
-                </Text>
-                <View style={styles.soilProgressBar}>
-                  <View style={[styles.soilProgressFill, { 
-                    width: `${soilData.level}%`,
-                    backgroundColor: soilData.color
-                  }]} />
+            <View style={styles.cameraCard}>
+              <View style={styles.cameraHeader}>
+                <View style={styles.liveBadge}>
+                  <View style={styles.liveDot} />
+                  <Text style={styles.liveText}>LIVE</Text>
                 </View>
+                <Text style={{ fontSize: theme.typography.fontSize.xs, color: theme.colors.text.tertiary }}>
+                  {formatTime(lastUpdate)}
+                </Text>
+              </View>
+
+              <View style={styles.streamContainer}>
+                {streamUrl ? (
+                  <Image
+                    key={streamRefreshKey}
+                    source={{ uri: `${streamUrl}?t=${Date.now()}` }}
+                    style={styles.streamImage}
+                    resizeMode="cover"
+                    onError={() => console.log('Stream error')}
+                  />
+                ) : (
+                  <View style={styles.streamPlaceholder}>
+                    <Ionicons name="camera-outline" size={48} color={theme.colors.text.disabled} />
+                    <Text style={styles.streamPlaceholderText}>
+                      {lang === 'tl' ? 'Naglo-load...' : 'Loading...'}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.streamInfo}>
+                <Ionicons name="wifi-outline" size={12} color={theme.colors.text.tertiary} style={{ marginRight: theme.spacing[1] }} />
+                <Text style={styles.streamInfoText}>{CONFIG.ESP32_IP}:81/stream</Text>
               </View>
             </View>
           </View>
-        </Animated.View>
-      </View>
+
+          {/* Bird Detection Status */}
+          <View style={styles.section}>
+            <StatusIndicator
+              status={sensorData.birdDetectionEnabled ? 'good' : 'warning'}
+              label={lang === 'tl' ? 'Pagbabantay ng Ibon' : 'Bird Detection'}
+              value={`${sensorData.birdsDetectedToday} ${lang === 'tl' ? 'ibon ngayong araw' : 'birds today'}`}
+              icon="🐦"
+              lang={lang}
+              size="medium"
+            />
+          </View>
+
+          {/* Detection Controls */}
+          <DetectionControls
+            detectionEnabled={sensorData.birdDetectionEnabled}
+            onDetectionToggle={() => sendCommand('TOGGLE_DETECTION')}
+            sensitivity={sensorData.detectionSensitivity}
+            onSensitivityChange={(value) => sendCommand('SET_SENSITIVITY', value)}
+            birdsDetectedToday={sensorData.birdsDetectedToday}
+            onResetCount={() => sendCommand('RESET_BIRD_COUNT')}
+            style={{ marginBottom: theme.spacing[4] }}
+          />
+
+          {/* Camera Settings */}
+          <CameraSettings
+            brightness={cameraBrightness}
+            contrast={cameraContrast}
+            onBrightnessChange={(value) => {
+              setCameraBrightness(value);
+              sendCommand('SET_BRIGHTNESS', value);
+            }}
+            onContrastChange={(value) => {
+              setCameraContrast(value);
+              sendCommand('SET_CONTRAST', value);
+            }}
+            onResolutionChange={(value) => sendCommand('SET_RESOLUTION', value)}
+            grayscaleMode={grayscaleMode}
+            onGrayscaleModeToggle={() => {
+              setGrayscaleMode(!grayscaleMode);
+              sendCommand('TOGGLE_GRAYSCALE');
+            }}
+            style={{ marginBottom: theme.spacing[4] }}
+          />
+
+          {/* Soil Sensor */}
+          {sensorData.hasRS485Sensor && (
+            <SoilSensorCard
+              humidity={sensorData.soilHumidity}
+              temperature={sensorData.soilTemperature}
+              conductivity={sensorData.soilConductivity}
+              ph={sensorData.ph}
+              lang={lang}
+            />
+          )}
+
+          {/* Audio Player */}
+          {sensorData.hasDFPlayer && (
+            <AudioPlayerControl
+              currentTrack={sensorData.currentTrack}
+              totalTracks={7}
+              volume={sensorData.volume}
+              audioPlaying={sensorData.audioPlaying}
+              onPlay={() => playTrack(sensorData.currentTrack)}
+              onStop={stopAudio}
+              onNext={nextTrack}
+              onVolumeChange={setAudioVolume}
+              lang={lang}
+            />
+          )}
+
+          {/* Servo Arms */}
+          {sensorData.hasServos && (
+            <ServoArmControl
+              leftArmAngle={sensorData.leftArmAngle}
+              rightArmAngle={sensorData.rightArmAngle}
+              oscillating={sensorData.oscillating}
+              onLeftChange={setLeftServo}
+              onRightChange={setRightServo}
+              onToggleOscillation={toggleOscillation}
+              lang={lang}
+            />
+          )}
+
+          {/* Head Controls */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>
+                {lang === 'tl' ? 'Direksyon ng Ulo' : 'Head Direction'}
+              </Text>
+              <Text style={{ fontSize: theme.typography.fontSize.sm, color: theme.colors.text.tertiary }}>
+                {sensorData.headPosition}°
+              </Text>
+            </View>
+            <View style={styles.controlsGrid}>
+              <QuickActionButton
+                icon="⬅️"
+                label={lang === 'tl' ? 'Kaliwa' : 'Left'}
+                gradient={theme.colors.gradients.primary}
+                onPress={rotateLeft}
+                size="small"
+                style={{ flex: 1 }}
+              />
+              <QuickActionButton
+                icon="⏺️"
+                label={lang === 'tl' ? 'Gitna' : 'Center'}
+                gradient={theme.colors.gradients.success}
+                onPress={rotateCenter}
+                size="small"
+                style={{ flex: 1 }}
+              />
+              <QuickActionButton
+                icon="➡️"
+                label={lang === 'tl' ? 'Kanan' : 'Right'}
+                gradient={theme.colors.gradients.primary}
+                onPress={rotateRight}
+                size="small"
+                style={{ flex: 1 }}
+              />
+            </View>
+          </View>
+
+          {/* Emergency Actions */}
+          <View style={styles.emergencyCard}>
+            <View style={styles.emergencyHeader}>
+              <Ionicons name="warning" size={24} color={theme.colors.error[600]} />
+              <Text style={styles.emergencyTitle}>
+                {lang === 'tl' ? 'Emergency na Aksyon' : 'Emergency Actions'}
+              </Text>
+            </View>
+            <View style={styles.emergencyButtons}>
+              <QuickActionButton
+                icon="📢"
+                label={lang === 'tl' ? 'Takutin!' : 'Scare Now!'}
+                gradient={theme.colors.gradients.error}
+                onPress={soundAlarm}
+                size="medium"
+                style={{ flex: 1 }}
+              />
+              <QuickActionButton
+                icon="🔄"
+                label={lang === 'tl' ? 'I-restart' : 'Restart'}
+                gradient={theme.colors.gradients.warning}
+                onPress={restartSystem}
+                size="medium"
+                style={{ flex: 1 }}
+              />
+            </View>
+          </View>
+        </View>
+      </Animated.View>
     </ScrollView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  header: {
-    paddingTop: 50,
-    paddingBottom: 30,
-    paddingHorizontal: 20,
-  },
-  headerContent: {
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: 'white',
-    textAlign: 'center',
-    marginBottom: 5,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.8)',
-    marginBottom: 20,
-  },
-  connectionCard: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 15,
-    padding: 15,
-    width: '100%',
-    alignItems: 'center',
-  },
-  connectionStatus: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 5,
-  },
-  statusDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 8,
-    elevation: 3,
-  },
-  statusText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  lastUpdate: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 12,
-  },
-  content: {
-    padding: 15,
-  },
-  streamCard: {
-    backgroundColor: 'white',
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 15,
-    elevation: 3,
-  },
-  streamHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  liveBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  liveDot: {
-    color: '#FF4757',
-    marginRight: 6,
-    fontWeight: '900',
-  },
-  liveText: {
-    color: '#FF4757',
-    fontWeight: '700',
-  },
-  streamMeta: {
-    color: '#666',
-  },
-  streamBody: {
-    height: 140,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
-  },
-  reconnectingText: {
-    color: '#FF6B6B',
-    fontWeight: '700',
-  },
-  previewPlaceholder: {
-    color: '#888',
-    fontStyle: 'italic',
-  },
-  streamActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  streamButton: {
-    flex: 1,
-    marginRight: 10,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  streamButtonText: {
-    color: 'white',
-    fontWeight: '700',
-  },
-  quickSection: {
-    marginBottom: 20,
-  },
-  quickRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  quickButton: {
-    flex: 1,
-    marginRight: 10,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 3,
-  },
-  quickButtonText: {
-    color: 'white',
-    fontWeight: '700',
-  },
-  modeCard: {
-    backgroundColor: 'white',
-    borderRadius: 15,
-    padding: 20,
-    marginBottom: 20,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-  },
-  modeContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  modeInfo: {
-    flex: 1,
-  },
-  modeTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  modeDescription: {
-    fontSize: 14,
-    color: '#666',
-  },
-  switch: {
-    transform: [{ scaleX: 1.1 }, { scaleY: 1.1 }],
-  },
-  sensorGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  sensorCard: {
-    width: (width - 45) / 2,
-    backgroundColor: 'white',
-    borderRadius: 15,
-    padding: 20,
-    marginBottom: 15,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-  },
-  fullWidth: {
-    width: width - 30,
-  },
-  alertCard: {
-    borderWidth: 2,
-    borderColor: '#FF6B6B',
-    backgroundColor: '#FFF5F5',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  sensorIcon: {
-    fontSize: 24,
-    marginRight: 8,
-  },
-  sensorLabel: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '500',
-  },
-  sensorValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 2,
-  },
-  sensorUnit: {
-    fontSize: 12,
-    color: '#888',
-    marginBottom: 8,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  alertBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: '#FF6B6B',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  alertText: {
-    color: 'white',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  soilCard: {
-    minHeight: 120,
-  },
-  soilContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  soilStats: {
-    alignItems: 'flex-start',
-  },
-  soilStatus: {
-    flex: 1,
-    marginLeft: 20,
-  },
-  soilStatusText: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  soilProgressBar: {
-    height: 8,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  soilProgressFill: {
-    height: '100%',
-    borderRadius: 4,
-  },
-});
 
 export default DashboardScreen;
