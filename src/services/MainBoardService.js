@@ -152,7 +152,14 @@ class MainBoardService {
   }
 
   async triggerAlarm() {
-    return this.sendCommand('/trigger-alarm');
+    // Note: /trigger-alarm endpoint may not exist in all firmware versions
+    // Fallback: Play next track + move arms
+    const playResult = await this.nextTrack();
+    const moveResult = await this.moveArms();
+    return {
+      success: playResult.success && moveResult.success,
+      message: 'Alarm triggered (via play + move)',
+    };
   }
 
   /**

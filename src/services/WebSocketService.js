@@ -165,6 +165,28 @@ class WebSocketService {
       case 'STOP_MOVEMENT':
       case 'STOP_AUDIO':
         return await MainBoardService.stop();
+
+      // Camera-specific commands - ignore for main board
+      case 'SET_SENSITIVITY':
+      case 'SET_BRIGHTNESS':
+      case 'SET_CONTRAST':
+      case 'TOGGLE_GRAYSCALE':
+      case 'TOGGLE_DETECTION':
+      case 'RESET_BIRD_COUNT':
+        // These are camera commands, silently ignore
+        return { success: true, message: 'Camera command - ignored by main board' };
+
+      // Unsupported commands - log but don't error
+      case 'ROTATE_HEAD':
+      case 'ROTATE_HEAD_LEFT':
+      case 'ROTATE_HEAD_RIGHT':
+      case 'ROTATE_HEAD_CENTER':
+      case 'TEST_BUZZER':
+      case 'CALIBRATE_SENSORS':
+      case 'RESET_SYSTEM':
+        console.log(`ℹ️ Command "${command}" not implemented in current firmware`);
+        return { success: false, error: 'Not implemented in firmware' };
+
       default:
         console.warn('Unknown main board command:', command);
         return { success: false, error: 'Unknown command' };
