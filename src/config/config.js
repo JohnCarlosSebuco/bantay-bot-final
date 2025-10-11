@@ -7,10 +7,10 @@ export const CONFIG = {
   CAMERA_ESP32_PORT: 80,
   CAMERA_WEBSOCKET_PATH: '/ws',
 
-  // Main Control Board ESP32 (port 81)
+  // Main Control Board ESP32 (port 81) - Uses HTTP polling, not WebSocket
   MAIN_ESP32_IP: '192.168.1.29',      // Change this to your main board's IP
   MAIN_ESP32_PORT: 81,
-  MAIN_WEBSOCKET_PATH: '/ws',
+  MAIN_WEBSOCKET_PATH: '/ws',         // Not used - kept for backward compatibility
 
   // Legacy single IP (fallback - uses main board)
   ESP32_IP: '192.168.1.29',

@@ -1,20 +1,33 @@
 import { CONFIG } from '../config/config';
+import MainBoardService from './MainBoardService';
 
 class WebSocketService {
   constructor() {
-    // Dual WebSocket connections
-    this.mainWs = null;       // Main control board (sensors, motors, audio)
+    // Main board uses HTTP polling (MainBoardService)
+    // Camera board uses WebSocket
     this.cameraWs = null;     // Camera board (detection, camera controls)
 
     this.listeners = {};
-    this.mainReconnectAttempts = 0;
     this.cameraReconnectAttempts = 0;
-    this.isMainConnecting = false;
     this.isCameraConnecting = false;
 
     // Connection state
-    this.mainConnected = false;
     this.cameraConnected = false;
+
+    // Bind main board service events
+    MainBoardService.on('connected', (status) => {
+      this.emit('main_connected', status);
+      this.emit('connected', this.isFullyConnected());
+    });
+
+    MainBoardService.on('data', (data) => {
+      this.emit('main_data', data);
+      this.emit('data', data);  // Legacy compatibility
+    });
+
+    MainBoardService.on('error', (error) => {
+      this.emit('error', { source: 'main', error });
+    });
   }
 
   /**
@@ -26,65 +39,10 @@ class WebSocketService {
   }
 
   /**
-   * Connect to Main Control Board ESP32
+   * Connect to Main Control Board ESP32 (uses HTTP polling)
    */
-  connectMain(ip = CONFIG.MAIN_ESP32_IP, path = CONFIG.MAIN_WEBSOCKET_PATH) {
-    if (this.isMainConnecting || (this.mainWs && this.mainWs.readyState === WebSocket.OPEN)) {
-      return;
-    }
-
-    this.isMainConnecting = true;
-    const url = `ws://${ip}:${CONFIG.MAIN_ESP32_PORT}${path}`;
-    console.log('Connecting to Main Board:', url);
-
-    try {
-      this.mainWs = new WebSocket(url);
-
-      this.mainWs.onopen = () => {
-        console.log('✅ Main Board WebSocket connected');
-        this.isMainConnecting = false;
-        this.mainReconnectAttempts = 0;
-        this.mainConnected = true;
-        this.emit('main_connected', true);
-        this.emit('connected', this.isFullyConnected());
-      };
-
-      this.mainWs.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          this.emit('main_data', data);
-
-          // Handle specific message types
-          if (data && data.type === 'sensor_data') {
-            this.emit('data', data);  // Legacy compatibility
-          } else if (data && data.type === 'motion_alert') {
-            this.emit('alert', data);
-          }
-        } catch (error) {
-          console.error('Error parsing main board message:', error);
-        }
-      };
-
-      this.mainWs.onerror = (error) => {
-        console.error('Main Board WebSocket error:', error);
-        this.isMainConnecting = false;
-        this.mainConnected = false;
-        this.emit('error', { source: 'main', error });
-      };
-
-      this.mainWs.onclose = () => {
-        console.log('❌ Main Board WebSocket disconnected');
-        this.isMainConnecting = false;
-        this.mainConnected = false;
-        this.emit('main_connected', false);
-        this.emit('connected', this.isFullyConnected());
-        this.attemptReconnectMain();
-      };
-    } catch (error) {
-      console.error('Failed to connect to main board:', error);
-      this.isMainConnecting = false;
-      this.attemptReconnectMain();
-    }
+  connectMain() {
+    MainBoardService.startPolling(2000);  // Poll every 2 seconds
   }
 
   /**
@@ -161,7 +119,7 @@ class WebSocketService {
    * Check if both connections are established
    */
   isFullyConnected() {
-    return this.mainConnected && this.cameraConnected;
+    return MainBoardService.getConnectionStatus() && this.cameraConnected;
   }
 
   /**
@@ -169,23 +127,10 @@ class WebSocketService {
    */
   getConnectionStatus() {
     return {
-      main: this.mainConnected,
+      main: MainBoardService.getConnectionStatus(),
       camera: this.cameraConnected,
       fullyConnected: this.isFullyConnected(),
     };
-  }
-
-  /**
-   * Reconnection logic
-   */
-  attemptReconnectMain() {
-    if (this.mainReconnectAttempts < 5) {
-      this.mainReconnectAttempts++;
-      setTimeout(() => {
-        console.log(`🔄 Main Board reconnection attempt ${this.mainReconnectAttempts}`);
-        this.connectMain();
-      }, CONFIG.RECONNECT_INTERVAL);
-    }
   }
 
   attemptReconnectCamera() {
@@ -199,15 +144,31 @@ class WebSocketService {
   }
 
   /**
-   * Send command to main board
+   * Send command to main board (uses HTTP)
    */
-  sendToMain(message) {
-    if (this.mainWs && this.mainWs.readyState === WebSocket.OPEN) {
-      this.mainWs.send(JSON.stringify(message));
-      return true;
+  async sendToMain(message) {
+    // Map WebSocket-style commands to HTTP endpoints
+    const command = message.command;
+    const value = message.value;
+
+    switch (command) {
+      case 'SOUND_ALARM':
+        return await MainBoardService.triggerAlarm();
+      case 'PLAY_TRACK':
+        return await MainBoardService.playTrack(value);
+      case 'NEXT_TRACK':
+        return await MainBoardService.nextTrack();
+      case 'SET_VOLUME':
+        return await MainBoardService.setVolume(value);
+      case 'MOVE_ARMS':
+        return await MainBoardService.moveArms();
+      case 'STOP_MOVEMENT':
+      case 'STOP_AUDIO':
+        return await MainBoardService.stop();
+      default:
+        console.warn('Unknown main board command:', command);
+        return { success: false, error: 'Unknown command' };
     }
-    console.warn('Main board not connected, cannot send message');
-    return false;
   }
 
   /**
@@ -255,11 +216,7 @@ class WebSocketService {
    * Disconnect from all boards
    */
   disconnect() {
-    if (this.mainWs) {
-      this.mainWs.close();
-      this.mainWs = null;
-      this.mainConnected = false;
-    }
+    MainBoardService.disconnect();
     if (this.cameraWs) {
       this.cameraWs.close();
       this.cameraWs = null;

@@ -11,6 +11,7 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncWebSocket.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 
 // Camera model configuration
 #include "board_config.h"
@@ -20,6 +21,12 @@
 // ===========================
 const char *ssid = "YOUR_WIFI_SSID";
 const char *password = "YOUR_WIFI_PASSWORD";
+
+// ===========================
+// Main Board Configuration
+// ===========================
+const char *mainBoardIP = "192.168.1.29";  // Change to your main board's IP!
+const int mainBoardPort = 81;
 
 // ===========================
 // Web Server & WebSocket
@@ -253,7 +260,10 @@ void performBirdDetection() {
 
       Serial.println("🐦 BIRD DETECTED!");
 
-      // Send alert via WebSocket
+      // TRIGGER MAIN BOARD ALARM via HTTP
+      triggerMainBoardAlarm();
+
+      // Send alert via WebSocket (for app monitoring)
       StaticJsonDocument<256> alertDoc;
       alertDoc["type"] = "bird_detection";
       alertDoc["message"] = "Bird detected!";
@@ -274,6 +284,27 @@ void performBirdDetection() {
   currGrayBuffer = temp;
 
   esp_camera_fb_return(currentFrame);
+}
+
+// ===========================
+// Trigger Main Board Alarm
+// ===========================
+void triggerMainBoardAlarm() {
+  HTTPClient http;
+  String url = "http://" + String(mainBoardIP) + ":" + String(mainBoardPort) + "/trigger-alarm";
+
+  http.begin(url);
+  http.setTimeout(2000);  // 2 second timeout
+
+  int httpCode = http.GET();
+
+  if (httpCode > 0) {
+    Serial.printf("✅ Main board triggered! Response: %d\n", httpCode);
+  } else {
+    Serial.printf("❌ Failed to trigger main board: %s\n", http.errorToString(httpCode).c_str());
+  }
+
+  http.end();
 }
 
 void convertToGrayscale(camera_fb_t *fb, uint8_t *grayBuffer) {

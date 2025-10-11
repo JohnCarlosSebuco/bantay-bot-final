@@ -1,145 +1,152 @@
 /**
- * BantayBot Main Control Board - ESP32
- * Controls: Audio (DFPlayer), Servos (PCA9685), Stepper Motor, RS485 Soil Sensor, PIR
+ * BantayBot Main Control Board - ESP32 (WiFi + HTTP Version)
+ * Based on your working esp32board-noCam.ino
  *
+ * Controls: Audio (DFPlayer), Servos (PCA9685), Stepper Motor, RS485 Soil Sensor, PIR
  * Hardware: ESP32 DevKit v1 or similar
- * Features: WebSocket API, Sensor monitoring, Motor control, Audio playback
+ *
+ * Features: WiFi connection + HTTP API for app control
  */
 
 #include "DFRobotDFPlayerMini.h"
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 #include <WiFi.h>
-#include <ESPAsyncWebServer.h>
-#include <AsyncWebSocket.h>
-#include <ArduinoJson.h>
-#include "config.h"
+#include <WebServer.h>
 
 // ===========================
-// Hardware Objects
+// WiFi Configuration
 // ===========================
-HardwareSerial mySerial(1);  // DFPlayer Serial
+const char* ssid = "YOUR_WIFI_SSID";        // Change this!
+const char* password = "YOUR_WIFI_PASSWORD";  // Change this!
+
+WebServer server(81);  // HTTP server on port 81
+
+// ==== DFPlayer Mini ====
+HardwareSerial mySerial(1);
 DFRobotDFPlayerMini player;
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
-
-AsyncWebServer server(WEBSOCKET_PORT);
-AsyncWebSocket ws("/ws");
-
-// ===========================
-// System State Variables
-// ===========================
-// Audio State
 int currentTrack = 1;
-int volumeLevel = DEFAULT_VOLUME;
-bool audioPlaying = false;
+const int totalTracks = 7;   // 7 songs total
+int volumeLevel = 20;
 
-// Servo State
-int leftArmAngle = 90;
-int rightArmAngle = 90;
-bool servoActive = false;
-int servoCycles = 0;
+// ==== Soil Sensor (RS485, on Serial2) ====
+#define RE 4        // MAX485 DE/RE pin (direction control)
+#define RXD2 17     // ESP32 RX pin (connect to MAX485 RO)
+#define TXD2 16     // ESP32 TX pin (connect to MAX485 DI)
+
+// ===== Modbus Queries (Slave ID=1, FC=3, correct CRCs) =====
+const byte humi[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0A}; // Humidity
+const byte temp[] = {0x01, 0x03, 0x00, 0x01, 0x00, 0x01, 0xD5, 0xCA}; // Temperature
+const byte cond[] = {0x01, 0x03, 0x00, 0x02, 0x00, 0x01, 0x25, 0xCA}; // Conductivity
+const byte phph[] = {0x01, 0x03, 0x00, 0x03, 0x00, 0x01, 0x74, 0x0A}; // pH
+byte values[11];
+
+// ==== Stepper Motor (TMC2225) ====
+#define STEP_PIN 25
+#define DIR_PIN 33
+#define EN_PIN 32
+const int STEPS_PER_LOOP = 20;
+const int STEP_DELAY_US = 800;
+
+// ==== PCA9685 Servos ====
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
+#define SERVO_MIN 120
+#define SERVO_MAX 600
+#define SERVO_ARM1 0
+#define SERVO_ARM2 1
 int servoAngle = 0;
 int servoStep = 3;
 unsigned long lastServoUpdate = 0;
+const unsigned long servoInterval = 30;
 
-// Stepper Motor State
-int currentHeadPosition = 0;  // Current angle in degrees
-bool stepperMoving = false;
-
-// RS485 Soil Sensor Data
-byte sensorValues[11];
-float soilHumidity = 0.0;
-float soilTemperature = 0.0;
-float soilConductivity = 0.0;
-float soilPH = 7.0;
-
-// PIR Motion State
+// ==== PIR Sensor ====
+#define PIR_PIN 14
 bool motionDetected = false;
 unsigned long motionStart = 0;
 unsigned long cooldownStart = 0;
 bool inCooldown = false;
 
-// Timing
-unsigned long lastSensorRead = 0;
+// ==== Soil Sensor Timing ====
+unsigned long lastSoilRead = 0;
+const unsigned long soilInterval = 2000;
 
-// Hardware availability flags
-bool hasDFPlayer = false;
-bool hasRS485Sensor = false;
-bool hasServos = false;
-
-// ===========================
-// Function Declarations
-// ===========================
-void setupDFPlayer();
-void setupRS485();
-void setupServos();
-void setupStepper();
-void setupPIR();
-float readRS485Sensor(const byte *cmd);
-void readAllSensors();
-void stepStepper(int steps);
-void rotateHeadTo(int targetDegrees);
-void updateServos();
-void playTrack(int track);
-void nextTrack();
-void stopAudio();
-void setVolume(int vol);
-void setServoAngle(int servo, int angle);
-void activateServoOscillation();
-void onWebSocketEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
-                     AwsEventType type, void *arg, uint8_t *data, size_t len);
-void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
-void sendSensorData();
+// ==== Servo Motion Control ====
+int servoCycles = 0;
+bool servoActive = false;
 
 // ===========================
 // Setup
 // ===========================
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n\n🤖 BantayBot Main Control Board Starting...");
+  Serial.println("\n🤖 BantayBot Main Board Starting...");
 
-  // WiFi Setup
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // ---- WiFi Connection ----
+  WiFi.begin(ssid, password);
   Serial.print("📡 Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
-  Serial.println("\n✅ WiFi connected");
-  Serial.print("📍 IP Address: ");
-  Serial.println(WiFi.localIP());
 
-  // Initialize hardware components
-  setupDFPlayer();
-  setupRS485();
-  setupServos();
-  setupStepper();
-  setupPIR();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n✅ WiFi connected!");
+    Serial.print("📍 IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\n⚠️ WiFi failed - continuing without network");
+  }
 
-  // Setup WebSocket
-  ws.onEvent(onWebSocketEvent);
-  server.addHandler(&ws);
+  // ---- DFPlayer ----
+  mySerial.begin(9600, SERIAL_8N1, 27, 26);
+  delay(100);
 
-  // Add health check endpoint
-  server.on("/health", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "application/json", "{\"status\":\"ok\"}");
-  });
+  if (player.begin(mySerial)) {
+    Serial.println("✅ DFPlayer Mini online");
+    player.volume(volumeLevel);
+  } else {
+    Serial.println("⚠️ DFPlayer Mini failed! Check wiring");
+    while (true) delay(1000);  // Stop here if DFPlayer fails
+  }
 
-  server.begin();
+  // ---- Soil Sensor ----
+  Serial2.begin(4800, SERIAL_8N1, RXD2, TXD2);
+  pinMode(RE, OUTPUT);
+  digitalWrite(RE, LOW);
+  Serial.println("✅ Soil Sensor Initialized");
 
-  Serial.print("📡 WebSocket server: ws://");
-  Serial.print(WiFi.localIP());
-  Serial.print(":");
-  Serial.println(WEBSOCKET_PORT);
-  Serial.println("✅ BantayBot Main Board Ready!");
+  // ---- Stepper ----
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+  pinMode(EN_PIN, OUTPUT);
+  digitalWrite(EN_PIN, LOW);  // Enable (active LOW)
+  digitalWrite(DIR_PIN, HIGH);
+  Serial.println("✅ Stepper Initialized");
+
+  // ---- PCA9685 ----
+  Wire.begin(21, 22);
+  pwm.begin();
+  pwm.setPWMFreq(50);
+  Serial.println("✅ PCA9685 Initialized");
+
+  // ---- PIR ----
+  pinMode(PIR_PIN, INPUT);
+  Serial.println("✅ PIR Initialized");
+
+  // ---- Setup HTTP Server ----
+  setupHTTPServer();
+
+  Serial.println("🚀 BantayBot Main Board Ready!");
 }
 
 // ===========================
 // Main Loop
 // ===========================
 void loop() {
+  server.handleClient();  // Handle HTTP requests
   unsigned long now = millis();
-  ws.cleanupClients();
 
   // ---- PIR Detection ----
   if (!inCooldown && digitalRead(PIR_PIN) == HIGH && !motionDetected) {
@@ -150,211 +157,100 @@ void loop() {
 
     // Play next track
     currentTrack++;
-    if (currentTrack == SKIP_TRACK) currentTrack++;
-    if (currentTrack > TOTAL_TRACKS) currentTrack = 1;
-    if (currentTrack == SKIP_TRACK) currentTrack++;
+    if (currentTrack == 3) currentTrack++;  // skip track 3
+    if (currentTrack > totalTracks) currentTrack = 1;
+    if (currentTrack == 3) currentTrack++;  // skip track 3 again
 
-    if (hasDFPlayer) {
-      playTrack(currentTrack);
-    }
-
+    player.play(currentTrack);
     Serial.print("🎯 PIR Triggered! Playing track ");
     Serial.println(currentTrack);
-
-    // Send alert
-    StaticJsonDocument<256> alertDoc;
-    alertDoc["type"] = "motion_alert";
-    alertDoc["message"] = "Motion detected!";
-    alertDoc["track"] = currentTrack;
-    alertDoc["timestamp"] = millis();
-    String alertMsg;
-    serializeJson(alertDoc, alertMsg);
-    ws.textAll(alertMsg);
   }
 
-  // ---- Motion Active: Servo oscillation while playing ----
+  // ---- Motion Active: Stop Motor while playing ----
   if (motionDetected) {
     updateServos();
 
-    if (now - motionStart >= MOTION_TIMEOUT) {
-      if (hasDFPlayer) player.stop();
+    if (now - motionStart >= 120000UL) {  // 2 minutes
+      player.stop();
       motionDetected = false;
       inCooldown = true;
       cooldownStart = now;
       Serial.println("⏸️ Stopped after 2 minutes, entering cooldown");
     }
   } else {
-    // ---- Motor Normal Run (if stepper needs continuous movement) ----
-    // stepStepper(20);  // Uncomment if you want continuous rotation
+    // ---- Motor Normal Run ----
+    stepStepper(STEPS_PER_LOOP);
   }
 
   // ---- Cooldown Check (30s) ----
-  if (inCooldown && (now - cooldownStart >= MOTION_COOLDOWN)) {
+  if (inCooldown && (now - cooldownStart >= 30000UL)) {
     inCooldown = false;
-    Serial.println("✅ Cooldown complete, ready for next detection");
+    Serial.println("✅ Cooldown complete");
   }
 
-  // ---- Read Sensors Periodically ----
-  if (now - lastSensorRead >= SENSOR_UPDATE_INTERVAL) {
-    lastSensorRead = now;
-    readAllSensors();
-    sendSensorData();
+  // ---- Read Soil Sensors ----
+  if (now - lastSoilRead >= soilInterval) {
+    lastSoilRead = now;
+
+    float humidity = readSensor(humi) / 10.0;
+    float temperature = readSensor(temp) / 10.0;
+    float conductivity = readSensor(cond);
+    float ph = readSensor(phph) / 10.0;
+
+    if (humidity > -90) {  // Valid reading
+      Serial.print("💧 Humidity: "); Serial.print(humidity); Serial.println("%");
+      Serial.print("🌡️ Temp: "); Serial.print(temperature); Serial.println("°C");
+      Serial.print("⚡ Conductivity: "); Serial.print(conductivity); Serial.println(" µS/cm");
+      Serial.print("🧪 pH: "); Serial.println(ph);
+      Serial.println("---");
+    }
   }
 
   delay(10);
 }
 
-// ===========================
-// Hardware Setup Functions
-// ===========================
-void setupDFPlayer() {
-  mySerial.begin(9600, SERIAL_8N1, DFPLAYER_RX, DFPLAYER_TX);
-  delay(100);
-
-  if (player.begin(mySerial)) {
-    hasDFPlayer = true;
-    player.volume(volumeLevel);
-    Serial.println("✅ DFPlayer Mini initialized");
-  } else {
-    Serial.println("⚠️ DFPlayer Mini not found");
-    hasDFPlayer = false;
-  }
-}
-
-void setupRS485() {
-  Serial2.begin(RS485_BAUD, SERIAL_8N1, RS485_RX, RS485_TX);
-  pinMode(RS485_RE, OUTPUT);
-  digitalWrite(RS485_RE, LOW);
-  delay(100);
-
-  // Test sensor
-  float testRead = readRS485Sensor(CMD_HUMIDITY);
-  if (testRead > -900) {
-    hasRS485Sensor = true;
-    Serial.println("✅ RS485 soil sensor initialized");
-  } else {
-    Serial.println("⚠️ RS485 sensor not found");
-    hasRS485Sensor = false;
-  }
-}
-
-void setupServos() {
-  Wire.begin(SERVO_SDA, SERVO_SCL);
-  pwm.begin();
-  pwm.setPWMFreq(SERVO_FREQ);
-  delay(100);
-
-  // Set to neutral position
-  setServoAngle(SERVO_ARM1, 90);
-  setServoAngle(SERVO_ARM2, 90);
-
-  hasServos = true;
-  Serial.println("✅ PCA9685 servos initialized");
-}
-
-void setupStepper() {
-  pinMode(STEPPER_STEP_PIN, OUTPUT);
-  pinMode(STEPPER_DIR_PIN, OUTPUT);
-  pinMode(STEPPER_EN_PIN, OUTPUT);
-  digitalWrite(STEPPER_EN_PIN, LOW);  // Enable stepper (active LOW)
-  digitalWrite(STEPPER_DIR_PIN, HIGH);
-  Serial.println("✅ Stepper motor initialized");
-}
-
-void setupPIR() {
-  pinMode(PIR_PIN, INPUT);
-  Serial.println("✅ PIR sensor initialized");
-}
-
-// ===========================
-// Sensor Functions
-// ===========================
-float readRS485Sensor(const byte *cmd) {
-  digitalWrite(RS485_RE, HIGH);  // TX mode
+// ==== Soil Sensor Function ====
+float readSensor(const byte *cmd) {
+  digitalWrite(RE, HIGH);
   delay(10);
 
   // Send command
-  for (uint8_t i = 0; i < 8; i++) {
-    Serial2.write(cmd[i]);
-  }
+  for (uint8_t i = 0; i < 8; i++) Serial2.write(cmd[i]);
   Serial2.flush();
 
-  // Back to receive mode
-  digitalWrite(RS485_RE, LOW);
+  // Back to receive
+  digitalWrite(RE, LOW);
   delay(200);
 
   // Read response
   int i = 0;
   while (Serial2.available() > 0 && i < 7) {
-    sensorValues[i] = Serial2.read();
+    values[i] = Serial2.read();
     i++;
   }
 
-  if (i < 5) return -999;  // Error: no data
+  if (i < 5) return -999; // error, no data
 
-  int raw = (sensorValues[3] << 8) | sensorValues[4];
+  int raw = (values[3] << 8) | values[4];
   return raw;
 }
 
-void readAllSensors() {
-  if (hasRS485Sensor) {
-    float rawHumidity = readRS485Sensor(CMD_HUMIDITY);
-    float rawTemp = readRS485Sensor(CMD_TEMPERATURE);
-    float rawCond = readRS485Sensor(CMD_CONDUCTIVITY);
-    float rawPH = readRS485Sensor(CMD_PH);
-
-    if (rawHumidity > -900) soilHumidity = rawHumidity / 10.0;
-    if (rawTemp > -900) soilTemperature = rawTemp / 10.0;
-    if (rawCond > -900) soilConductivity = rawCond;
-    if (rawPH > -900) soilPH = rawPH / 10.0;
-  }
-}
-
-// ===========================
-// Stepper Motor Functions
-// ===========================
+// ==== Stepper Motor Non-blocking Step ====
 void stepStepper(int steps) {
   for (int i = 0; i < steps; i++) {
-    digitalWrite(STEPPER_STEP_PIN, HIGH);
-    delayMicroseconds(800);
-    digitalWrite(STEPPER_STEP_PIN, LOW);
-    delayMicroseconds(800);
+    digitalWrite(STEP_PIN, HIGH);
+    delayMicroseconds(STEP_DELAY_US);
+    digitalWrite(STEP_PIN, LOW);
+    delayMicroseconds(STEP_DELAY_US);
   }
 }
 
-void rotateHeadTo(int targetDegrees) {
-  targetDegrees = constrain(targetDegrees, -180, 180);
-
-  int deltaDegrees = targetDegrees - currentHeadPosition;
-  int stepsToMove = abs(deltaDegrees) * STEPS_PER_REVOLUTION / 360;
-
-  // Set direction
-  digitalWrite(STEPPER_DIR_PIN, deltaDegrees > 0 ? HIGH : LOW);
-
-  // Move
-  stepStepper(stepsToMove);
-  currentHeadPosition = targetDegrees;
-
-  Serial.printf("🔄 Head rotated to %d°\n", currentHeadPosition);
-}
-
-// ===========================
-// Servo Functions
-// ===========================
-void setServoAngle(int servo, int angle) {
-  angle = constrain(angle, 0, 180);
-  int pulse = map(angle, 0, 180, SERVO_MIN, SERVO_MAX);
-  pwm.setPWM(servo, 0, pulse);
-
-  if (servo == SERVO_ARM1) leftArmAngle = angle;
-  else if (servo == SERVO_ARM2) rightArmAngle = angle;
-}
-
+// ==== PCA9685 Servo Update ====
 void updateServos() {
   if (!servoActive) return;
 
   unsigned long now = millis();
-  if (now - lastServoUpdate >= SERVO_UPDATE_INTERVAL) {
+  if (now - lastServoUpdate >= servoInterval) {
     lastServoUpdate = now;
 
     pwm.setPWM(SERVO_ARM1, 0, map(servoAngle, 0, 180, SERVO_MIN, SERVO_MAX));
@@ -364,204 +260,95 @@ void updateServos() {
     if (servoAngle >= 180 || servoAngle <= 0) {
       servoStep = -servoStep;
       servoCycles++;
-      if (servoCycles >= SERVO_OSCILLATION_CYCLES) {
+      if (servoCycles >= 6) {
         servoActive = false;
         servoCycles = 0;
-        Serial.println("✅ Servo cycles complete");
+        Serial.println("✅ Servo cycles done");
       }
     }
   }
 }
 
-void activateServoOscillation() {
-  servoActive = true;
-  servoCycles = 0;
-  servoAngle = 0;
-  servoStep = 3;
-  Serial.println("🦾 Servo oscillation activated");
-}
-
 // ===========================
-// Audio Functions
+// HTTP Server Setup
 // ===========================
-void playTrack(int track) {
-  if (!hasDFPlayer) {
-    Serial.println("⚠️ DFPlayer not available");
-    return;
-  }
+void setupHTTPServer() {
+  // Status endpoint
+  server.on("/status", HTTP_GET, []() {
+    String json = "{";
+    json += "\"soilHumidity\":" + String(readSensor(humi) / 10.0) + ",";
+    json += "\"soilTemp\":" + String(readSensor(temp) / 10.0) + ",";
+    json += "\"soilConductivity\":" + String(readSensor(cond)) + ",";
+    json += "\"ph\":" + String(readSensor(phph) / 10.0) + ",";
+    json += "\"currentTrack\":" + String(currentTrack) + ",";
+    json += "\"volume\":" + String(volumeLevel) + ",";
+    json += "\"motionDetected\":" + String(motionDetected ? "true" : "false") + ",";
+    json += "\"servoActive\":" + String(servoActive ? "true" : "false");
+    json += "}";
+    server.send(200, "application/json", json);
+  });
 
-  // Skip track 3
-  if (track == SKIP_TRACK) track = 4;
-  if (track > TOTAL_TRACKS) track = 1;
-  if (track == SKIP_TRACK) track = 4;
+  // Play track
+  server.on("/play", HTTP_GET, []() {
+    if (server.hasArg("track")) {
+      int track = server.arg("track").toInt();
+      if (track == 3) track = 4;  // Skip track 3
+      if (track < 1) track = 1;
+      if (track > totalTracks) track = totalTracks;
+      currentTrack = track;
+      player.play(track);
+      server.send(200, "text/plain", "Playing track " + String(track));
+    } else {
+      server.send(400, "text/plain", "Missing track parameter");
+    }
+  });
 
-  currentTrack = track;
-  player.play(track);
-  audioPlaying = true;
-  Serial.printf("🎵 Playing track %d\n", track);
-}
+  // Volume control
+  server.on("/volume", HTTP_GET, []() {
+    if (server.hasArg("level")) {
+      int vol = server.arg("level").toInt();
+      volumeLevel = constrain(vol, 0, 30);
+      player.volume(volumeLevel);
+      server.send(200, "text/plain", "Volume set to " + String(volumeLevel));
+    } else {
+      server.send(400, "text/plain", "Missing level parameter");
+    }
+  });
 
-void nextTrack() {
-  currentTrack++;
-  if (currentTrack == SKIP_TRACK) currentTrack++;
-  if (currentTrack > TOTAL_TRACKS) currentTrack = 1;
-  playTrack(currentTrack);
-}
+  // Trigger servo oscillation
+  server.on("/move-arms", HTTP_GET, []() {
+    servoActive = true;
+    servoCycles = 0;
+    servoAngle = 0;
+    server.send(200, "text/plain", "Servo oscillation started");
+  });
 
-void stopAudio() {
-  if (hasDFPlayer) {
+  // Stop all movement
+  server.on("/stop", HTTP_GET, []() {
+    servoActive = false;
     player.stop();
-  }
-  audioPlaying = false;
-  Serial.println("⏸️ Audio stopped");
-}
+    server.send(200, "text/plain", "All stopped");
+  });
 
-void setVolume(int vol) {
-  volumeLevel = constrain(vol, 0, 30);
-  if (hasDFPlayer) {
-    player.volume(volumeLevel);
-  }
-  Serial.printf("🔊 Volume set to %d\n", volumeLevel);
-}
+  // TRIGGER ALARM (called by camera when bird detected)
+  server.on("/trigger-alarm", HTTP_GET, []() {
+    // Activate servo oscillation
+    servoActive = true;
+    servoCycles = 0;
+    servoAngle = 0;
 
-// ===========================
-// WebSocket Handlers
-// ===========================
-void onWebSocketEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
-                     AwsEventType type, void *arg, uint8_t *data, size_t len) {
-  switch (type) {
-    case WS_EVT_CONNECT:
-      Serial.printf("📱 Client #%u connected\n", client->id());
-      sendSensorData();
-      break;
-    case WS_EVT_DISCONNECT:
-      Serial.printf("📱 Client #%u disconnected\n", client->id());
-      break;
-    case WS_EVT_DATA:
-      handleWebSocketMessage(arg, data, len);
-      break;
-    default:
-      break;
-  }
-}
+    // Play next track (skip track 3)
+    currentTrack++;
+    if (currentTrack == 3) currentTrack++;
+    if (currentTrack > totalTracks) currentTrack = 1;
+    if (currentTrack == 3) currentTrack++;
 
-void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
-  AwsFrameInfo *info = (AwsFrameInfo*)arg;
-  if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-    data[len] = 0;
-    String message = String((char*)data);
+    player.play(currentTrack);
 
-    StaticJsonDocument<256> doc;
-    DeserializationError error = deserializeJson(doc, message);
-    if (error) {
-      Serial.printf("❌ JSON error: %s\n", error.c_str());
-      return;
-    }
+    Serial.println("🚨 ALARM TRIGGERED BY CAMERA! Playing track " + String(currentTrack));
+    server.send(200, "text/plain", "Alarm triggered! Track " + String(currentTrack));
+  });
 
-    const char* command = doc["command"];
-    int value = doc["value"] | 0;
-
-    Serial.printf("📨 Command: %s (value: %d)\n", command, value);
-
-    // Movement Commands
-    if (strcmp(command, "MOVE_ARMS") == 0) {
-      activateServoOscillation();
-    }
-    else if (strcmp(command, "ROTATE_HEAD") == 0) {
-      rotateHeadTo(value ? value : 45);
-    }
-    else if (strcmp(command, "ROTATE_HEAD_LEFT") == 0) {
-      rotateHeadTo(currentHeadPosition + (value ? value : 45));
-    }
-    else if (strcmp(command, "ROTATE_HEAD_RIGHT") == 0) {
-      rotateHeadTo(currentHeadPosition - (value ? value : 45));
-    }
-    else if (strcmp(command, "ROTATE_HEAD_CENTER") == 0) {
-      rotateHeadTo(0);
-    }
-    else if (strcmp(command, "STOP_MOVEMENT") == 0) {
-      servoActive = false;
-      Serial.println("🛑 All movement stopped");
-    }
-
-    // Audio Commands
-    else if (strcmp(command, "SOUND_ALARM") == 0) {
-      playTrack(currentTrack);
-    }
-    else if (strcmp(command, "PLAY_TRACK") == 0) {
-      playTrack(value);
-    }
-    else if (strcmp(command, "NEXT_TRACK") == 0) {
-      nextTrack();
-    }
-    else if (strcmp(command, "STOP_AUDIO") == 0) {
-      stopAudio();
-    }
-    else if (strcmp(command, "SET_VOLUME") == 0) {
-      setVolume(value);
-    }
-    else if (strcmp(command, "TEST_BUZZER") == 0) {
-      playTrack(1);  // Test with track 1
-    }
-
-    // Servo Commands
-    else if (strcmp(command, "SET_SERVO_ANGLE") == 0) {
-      int servo = doc["servo"] | 0;
-      setServoAngle(servo, value);
-    }
-
-    // System Commands
-    else if (strcmp(command, "CALIBRATE_SENSORS") == 0) {
-      readAllSensors();
-      Serial.println("🔧 Sensors calibrated");
-    }
-    else if (strcmp(command, "RESET_SYSTEM") == 0) {
-      Serial.println("🔄 Resetting system...");
-      delay(1000);
-      ESP.restart();
-    }
-
-    // Send updated status
-    sendSensorData();
-  }
-}
-
-void sendSensorData() {
-  StaticJsonDocument<768> doc;
-
-  doc["type"] = "sensor_data";
-
-  // Soil Sensor Data
-  doc["soilHumidity"] = soilHumidity;
-  doc["soilTemperature"] = soilTemperature;
-  doc["soilConductivity"] = soilConductivity;
-  doc["ph"] = soilPH;
-
-  // Motion State
-  doc["motion"] = motionDetected;
-  doc["inCooldown"] = inCooldown;
-
-  // Head Position
-  doc["headPosition"] = currentHeadPosition;
-
-  // Audio State
-  doc["currentTrack"] = currentTrack;
-  doc["volume"] = volumeLevel;
-  doc["audioPlaying"] = audioPlaying;
-
-  // Servo State
-  doc["leftArmAngle"] = leftArmAngle;
-  doc["rightArmAngle"] = rightArmAngle;
-  doc["servoActive"] = servoActive;
-
-  // Hardware Status
-  doc["hasDFPlayer"] = hasDFPlayer;
-  doc["hasRS485Sensor"] = hasRS485Sensor;
-  doc["hasServos"] = hasServos;
-
-  doc["timestamp"] = millis();
-
-  String output;
-  serializeJson(doc, output);
-  ws.textAll(output);
+  server.begin();
+  Serial.println("✅ HTTP server started on port 81");
 }
