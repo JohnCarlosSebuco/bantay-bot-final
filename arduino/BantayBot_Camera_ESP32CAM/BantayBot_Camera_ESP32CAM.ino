@@ -25,7 +25,7 @@ const char *password = "YOUR_WIFI_PASSWORD";
 // ===========================
 // Main Board Configuration
 // ===========================
-const char *mainBoardIP = "192.168.1.29";  // Change to your main board's IP!
+const char *mainBoardIP = "172.24.26.193";  // Main board's actual IP: 172.24.26.193
 const int mainBoardPort = 81;
 
 // ===========================
