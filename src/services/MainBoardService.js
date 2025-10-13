@@ -59,54 +59,64 @@ class MainBoardService {
   }
 
   /**
-   * Fetch current status from main board
+   * Fetch current status from main board with fallback strategy
    */
   async fetchStatus() {
-    try {
-      const response = await fetch(`${this.baseUrl}/status`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 5000,
-      });
+    const strategies = ConfigService.isInitialized
+      ? ConfigService.getMainBoardConnectionStrategy()
+      : [{ type: 'ip', url: `http://${CONFIG.MAIN_ESP32_IP}:${CONFIG.MAIN_ESP32_PORT}` }];
 
-      if (response.ok) {
-        const data = await response.json();
+    // Try each strategy
+    for (const strategy of strategies) {
+      try {
+        const response = await fetch(`${strategy.url}/status`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 5000,
+        });
 
-        // Mark as connected
-        if (!this.isConnected) {
-          this.isConnected = true;
-          this.emit('connected', true);
-          console.log('✅ Main Board connected');
+        if (response.ok) {
+          // Update baseUrl to the working strategy
+          this.baseUrl = strategy.url;
+          const data = await response.json();
+
+          // Mark as connected
+          if (!this.isConnected) {
+            this.isConnected = true;
+            this.emit('connected', true);
+            console.log(`✅ Main Board connected via ${strategy.type}`);
+          }
+
+          // Emit sensor data
+          this.lastData = {
+            type: 'sensor_data',
+            soilHumidity: data.soilHumidity,
+            soilTemperature: data.soilTemp,
+            soilConductivity: data.soilConductivity,
+            ph: data.ph,
+            motion: data.motionDetected,
+            currentTrack: data.currentTrack,
+            volume: data.volume,
+            servoActive: data.servoActive,
+            timestamp: Date.now(),
+          };
+
+          this.emit('data', this.lastData);
+          return data;
         }
-
-        // Emit sensor data
-        this.lastData = {
-          type: 'sensor_data',
-          soilHumidity: data.soilHumidity,
-          soilTemperature: data.soilTemp,
-          soilConductivity: data.soilConductivity,
-          ph: data.ph,
-          motion: data.motionDetected,
-          currentTrack: data.currentTrack,
-          volume: data.volume,
-          servoActive: data.servoActive,
-          timestamp: Date.now(),
-        };
-
-        this.emit('data', this.lastData);
-        return data;
-      } else {
-        throw new Error(`HTTP ${response.status}`);
+      } catch (error) {
+        console.log(`❌ Failed to connect to Main Board via ${strategy.type}: ${error.message}`);
+        // Continue to next strategy
       }
-    } catch (error) {
-      if (this.isConnected) {
-        this.isConnected = false;
-        this.emit('connected', false);
-        console.error('❌ Main Board connection lost:', error.message);
-      }
-      this.emit('error', error);
-      return null;
     }
+
+    // All strategies failed
+    if (this.isConnected) {
+      this.isConnected = false;
+      this.emit('connected', false);
+      console.error('❌ Main Board connection lost - all strategies failed');
+    }
+    return null;
   }
 
   /**

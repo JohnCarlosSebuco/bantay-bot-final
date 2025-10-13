@@ -195,7 +195,8 @@ const SettingsScreen = () => {
       // Extract base IP from current camera IP
       const baseIP = NetworkDiscoveryService.getBaseIP(cameraIP);
 
-      const devices = await NetworkDiscoveryService.quickScan(
+      // Use smart discovery (mDNS first, then IP scan)
+      const devices = await NetworkDiscoveryService.smartDiscover(
         baseIP,
         (progress, scanned, total) => {
           setScanProgress(progress);
@@ -207,18 +208,33 @@ const SettingsScreen = () => {
       if (devices.length > 0) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-        // Auto-fill IPs if found
+        // Auto-fill IPs/hostnames if found
         const cameraDevice = devices.find(d => d.type === 'camera');
         const mainDevice = devices.find(d => d.type === 'main');
 
-        if (cameraDevice) setCameraIP(cameraDevice.ip);
-        if (mainDevice) setMainBoardIP(mainDevice.ip);
+        if (cameraDevice) {
+          if (cameraDevice.useMDNS) {
+            // Found via mDNS - use hostname
+            await ConfigService.update({ useMDNS: true });
+          } else {
+            setCameraIP(cameraDevice.ip);
+          }
+        }
+        if (mainDevice) {
+          if (mainDevice.useMDNS) {
+            // Found via mDNS - use hostname
+            await ConfigService.update({ useMDNS: true });
+          } else {
+            setMainBoardIP(mainDevice.ip);
+          }
+        }
 
+        const method = devices[0].useMDNS ? 'mDNS' : 'IP scan';
         Alert.alert(
           lang === 'tl' ? 'Nakita!' : 'Devices Found!',
           lang === 'tl'
-            ? `Nakita ang ${devices.length} BantayBot device(s)!`
-            : `Found ${devices.length} BantayBot device(s)!`,
+            ? `Nakita ang ${devices.length} BantayBot device(s) via ${method}!`
+            : `Found ${devices.length} BantayBot device(s) via ${method}!`,
           [{ text: 'OK', style: 'default' }]
         );
       } else {

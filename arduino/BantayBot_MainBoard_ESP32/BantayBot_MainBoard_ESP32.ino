@@ -345,13 +345,67 @@ void setupConfigServer() {
       preferences.putString("ssid", newSSID);
       preferences.putString("password", newPassword);
 
-      String html = "<html><head><title>Saved</title><meta http-equiv='refresh' content='5;url=/'>";
-      html += "<style>body{font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;}</style></head>";
-      html += "<body><h1>✅ Saved!</h1><p>Restarting to connect to WiFi...</p></body></html>";
+      // Send initial response
+      String html = "<html><head><title>Connecting...</title>";
+      html += "<style>body{font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;}";
+      html += ".spinner{border:8px solid #f3f3f3;border-top:8px solid #2196F3;border-radius:50%;width:60px;height:60px;animation:spin 1s linear infinite;margin:20px auto;}";
+      html += "@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style></head>";
+      html += "<body><h1>Connecting to WiFi...</h1><div class='spinner'></div><p>Please wait...</p></body></html>";
       server.send(200, "text/html", html);
 
-      delay(2000);
-      ESP.restart();
+      delay(1000);
+
+      // Now try to connect to WiFi
+      WiFi.mode(WIFI_AP_STA);  // Keep AP running while connecting
+      WiFi.begin(newSSID.c_str(), newPassword.c_str());
+
+      Serial.println("Attempting WiFi connection...");
+      int attempts = 0;
+      while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+        delay(500);
+        Serial.print(".");
+        attempts++;
+      }
+
+      if (WiFi.status() == WL_CONNECTED) {
+        String connectedIP = WiFi.localIP().toString();
+        Serial.println("\n✅ WiFi connected!");
+        Serial.print("📍 IP Address: ");
+        Serial.println(connectedIP);
+
+        // Show success page with IP (accessible at 192.168.4.1/success)
+        server.on("/success", HTTP_GET, [connectedIP]() {
+          String successHtml = "<html><head><title>Success!</title><meta http-equiv='refresh' content='30;url=/'>";
+          successHtml += "<style>body{font-family:Arial;text-align:center;padding:30px;background:#f0f0f0;}";
+          successHtml += ".success{background:white;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);max-width:500px;margin:auto;}";
+          successHtml += ".ip{font-size:32px;font-weight:bold;color:#2196F3;background:#e3f2fd;padding:20px;border-radius:8px;margin:20px 0;word-break:break-all;}";
+          successHtml += ".note{color:#666;font-size:14px;margin-top:20px;}</style></head>";
+          successHtml += "<body><div class='success'><h1>✅ Connected!</h1>";
+          successHtml += "<p>Write down this IP address:</p>";
+          successHtml += "<div class='ip'>" + connectedIP + "</div>";
+          successHtml += "<p><strong>Port:</strong> 81</p>";
+          successHtml += "<p class='note'>⚡ Board will restart in 30 seconds...<br>Use this IP in your mobile app settings!</p>";
+          successHtml += "<p class='note'>💡 Or use hostname: <strong>bantaybot-main.local</strong></p></div></body></html>";
+          server.send(200, "text/html", successHtml);
+        });
+
+        // Redirect to success page
+        server.sendHeader("Location", "/success");
+        server.send(302);
+
+        // Wait for user to see the IP, then restart
+        delay(30000);
+        ESP.restart();
+      } else {
+        Serial.println("\n❌ WiFi connection failed");
+        String failHtml = "<html><head><title>Failed</title><meta http-equiv='refresh' content='5;url=/'>";
+        failHtml += "<style>body{font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;}</style></head>";
+        failHtml += "<body><h1>❌ Connection Failed</h1><p>Could not connect to WiFi.<br>Please check your credentials and try again.</p></body></html>";
+        server.send(200, "text/html", failHtml);
+
+        delay(5000);
+        WiFi.mode(WIFI_AP);  // Go back to AP mode only
+      }
     } else {
       server.send(400, "text/plain", "Invalid credentials");
     }
@@ -439,6 +493,44 @@ void setupHTTPServer() {
 
     Serial.println("🚨 ALARM TRIGGERED BY CAMERA! Playing track " + String(currentTrack));
     server.send(200, "text/plain", "Alarm triggered! Track " + String(currentTrack));
+  });
+
+  // Info endpoint - shows current status (no Serial Monitor needed!)
+  server.on("/info", HTTP_GET, []() {
+    String json = "{";
+    json += "\"device\":\"BantayBot Main Board\",";
+    json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+    json += "\"hostname\":\"bantaybot-main.local\",";
+    json += "\"port\":81,";
+    json += "\"ssid\":\"" + WiFi.SSID() + "\",";
+    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+    json += "\"connected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
+    json += "\"uptime\":" + String(millis() / 1000) + ",";
+    json += "\"freeHeap\":" + String(ESP.getFreeHeap());
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+
+  // Reset configuration endpoint
+  server.on("/reset-config", HTTP_GET, []() {
+    String html = "<html><head><title>Reset Configuration</title>";
+    html += "<style>body{font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;}</style></head>";
+    html += "<body><h1>⚠️ Reset Configuration?</h1>";
+    html += "<p>This will clear WiFi credentials and restart in setup mode.</p>";
+    html += "<form action='/reset-config' method='POST'>";
+    html += "<button type='submit' style='padding:15px 30px;background:#f44336;color:white;border:none;border-radius:5px;cursor:pointer;font-size:16px;'>Reset & Restart</button>";
+    html += "</form></body></html>";
+    server.send(200, "text/html", html);
+  });
+
+  server.on("/reset-config", HTTP_POST, []() {
+    preferences.clear();
+    String html = "<html><head><title>Reset Complete</title><meta http-equiv='refresh' content='3;url=/'>";
+    html += "<style>body{font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;}</style></head>";
+    html += "<body><h1>✅ Configuration Reset</h1><p>Restarting in setup mode...</p></body></html>";
+    server.send(200, "text/html", html);
+    delay(2000);
+    ESP.restart();
   });
 
   server.begin();

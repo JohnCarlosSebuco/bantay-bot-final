@@ -196,34 +196,74 @@ class NetworkDiscoveryService {
    * Note: React Native doesn't natively support mDNS, but can try hostname resolution
    */
   async testMDNS() {
-    const hostnames = ['bantaybot-main.local', 'bantaybot-camera.local'];
+    console.log('🔍 Testing mDNS discovery...');
+    const tests = [
+      { hostname: 'bantaybot-main.local', port: 81, type: 'main' },
+      { hostname: 'bantaybot-camera.local', port: 80, type: 'camera' },
+    ];
 
     const results = await Promise.allSettled(
-      hostnames.map(async hostname => {
+      tests.map(async ({ hostname, port, type }) => {
         try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 3000);
+
           // Try to fetch from hostname
-          const response = await fetch(`http://${hostname}/status`, {
+          const endpoint = type === 'camera' ? '/stream' : '/status';
+          const response = await fetch(`http://${hostname}:${port}${endpoint}`, {
             method: 'GET',
-            timeout: 3000,
+            signal: controller.signal,
           });
 
+          clearTimeout(timeoutId);
+
           if (response.ok) {
+            console.log(`✅ Found ${type} board via mDNS: ${hostname}`);
             return {
               hostname,
+              port,
+              type,
               available: true,
-              type: hostname.includes('camera') ? 'camera' : 'main',
+              useMDNS: true,
             };
           }
         } catch (error) {
-          // mDNS not available or device not found
+          console.log(`❌ mDNS test failed for ${hostname}: ${error.message}`);
         }
         return null;
       })
     );
 
-    return results
+    const found = results
       .filter(result => result.status === 'fulfilled' && result.value !== null)
       .map(result => result.value);
+
+    console.log(`mDNS discovery complete. Found ${found.length} devices.`);
+    return found;
+  }
+
+  /**
+   * Smart discovery - tries mDNS first, then falls back to IP scan
+   */
+  async smartDiscover(baseIP = null, onProgress = null) {
+    console.log('🔍 Starting smart discovery...');
+    this.foundDevices = [];
+
+    // Step 1: Try mDNS first (fast)
+    const mdnsDevices = await this.testMDNS();
+    if (mdnsDevices.length > 0) {
+      this.foundDevices = mdnsDevices;
+      console.log('✅ Found devices via mDNS, skipping IP scan');
+      return this.foundDevices;
+    }
+
+    // Step 2: If mDNS fails, fallback to IP scanning
+    console.log('mDNS failed, falling back to IP scan...');
+    if (baseIP) {
+      return await this.quickScan(baseIP, onProgress);
+    } else {
+      return await this.autoDiscover(onProgress);
+    }
   }
 
   /**

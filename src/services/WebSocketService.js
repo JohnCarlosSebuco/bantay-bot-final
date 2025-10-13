@@ -47,36 +47,74 @@ class WebSocketService {
   }
 
   /**
-   * Connect to Camera ESP32-CAM
+   * Connect to Camera ESP32-CAM with fallback strategy
    */
-  connectCamera(ip = null, path = CONFIG.CAMERA_WEBSOCKET_PATH) {
+  async connectCamera(ip = null, path = CONFIG.CAMERA_WEBSOCKET_PATH) {
     if (this.isCameraConnecting || (this.cameraWs && this.cameraWs.readyState === WebSocket.OPEN)) {
       return;
     }
 
     this.isCameraConnecting = true;
 
-    // Use ConfigService if available, fallback to CONFIG
-    const config = ConfigService.isInitialized ? ConfigService.get() : CONFIG;
-    const cameraIP = ip || config.cameraIP || CONFIG.CAMERA_ESP32_IP;
-    const cameraPort = config.cameraPort || CONFIG.CAMERA_ESP32_PORT;
+    // Get connection strategies (mDNS first, then IP)
+    const strategies = ConfigService.isInitialized
+      ? ConfigService.getCameraConnectionStrategy()
+      : [{type: 'ip', wsUrl: `ws://${CONFIG.CAMERA_ESP32_IP}:${CONFIG.CAMERA_ESP32_PORT}${path}`}];
 
-    const url = `ws://${cameraIP}:${cameraPort}${path}`;
-    console.log('Connecting to Camera Board:', url);
+    // Try each strategy
+    for (const strategy of strategies) {
+      const url = strategy.wsUrl;
+      console.log(`Trying Camera Board (${strategy.type}):`, url);
 
-    try {
-      this.cameraWs = new WebSocket(url);
+      const connected = await this.tryConnectCamera(url);
+      if (connected) {
+        console.log(`✅ Camera connected via ${strategy.type}`);
+        return;
+      } else {
+        console.log(`❌ Failed to connect via ${strategy.type}`);
+      }
+    }
 
-      this.cameraWs.onopen = () => {
-        console.log('✅ Camera Board WebSocket connected');
-        this.isCameraConnecting = false;
-        this.cameraReconnectAttempts = 0;
-        this.cameraConnected = true;
-        this.emit('camera_connected', true);
-        this.emit('connected', this.isFullyConnected());
-      };
+    // All strategies failed
+    console.error('❌ All Camera Board connection strategies failed');
+    this.isCameraConnecting = false;
+    this.attemptReconnectCamera();
+  }
 
-      this.cameraWs.onmessage = (event) => {
+  /**
+   * Try to connect to camera with a specific URL
+   */
+  async tryConnectCamera(url) {
+    return new Promise((resolve) => {
+      let resolved = false;
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          if (this.cameraWs) {
+            this.cameraWs.close();
+          }
+          resolve(false);
+        }
+      }, 5000); // 5 second timeout per attempt
+
+      try {
+        this.cameraWs = new WebSocket(url);
+
+        this.cameraWs.onopen = () => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            console.log('✅ Camera Board WebSocket connected');
+            this.isCameraConnecting = false;
+            this.cameraReconnectAttempts = 0;
+            this.cameraConnected = true;
+            this.emit('camera_connected', true);
+            this.emit('connected', this.isFullyConnected());
+            resolve(true);
+          }
+        };
+
+        this.cameraWs.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           this.emit('camera_data', data);
@@ -92,26 +130,40 @@ class WebSocketService {
         }
       };
 
-      this.cameraWs.onerror = (error) => {
-        console.error('Camera Board WebSocket error:', error);
-        this.isCameraConnecting = false;
-        this.cameraConnected = false;
-        this.emit('error', { source: 'camera', error });
-      };
+        this.cameraWs.onerror = (error) => {
+          console.error('Camera Board WebSocket error:', error);
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            resolve(false);
+          }
+          this.isCameraConnecting = false;
+          this.cameraConnected = false;
+          this.emit('error', { source: 'camera', error });
+        };
 
-      this.cameraWs.onclose = () => {
-        console.log('❌ Camera Board WebSocket disconnected');
-        this.isCameraConnecting = false;
-        this.cameraConnected = false;
-        this.emit('camera_connected', false);
-        this.emit('connected', this.isFullyConnected());
-        this.attemptReconnectCamera();
-      };
-    } catch (error) {
-      console.error('Failed to connect to camera board:', error);
-      this.isCameraConnecting = false;
-      this.attemptReconnectCamera();
-    }
+        this.cameraWs.onclose = () => {
+          console.log('❌ Camera Board WebSocket disconnected');
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            resolve(false);
+          }
+          this.isCameraConnecting = false;
+          this.cameraConnected = false;
+          this.emit('camera_connected', false);
+          this.emit('connected', this.isFullyConnected());
+          this.attemptReconnectCamera();
+        };
+      } catch (error) {
+        console.error('Failed to connect to camera board:', error);
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timeout);
+          resolve(false);
+        }
+      }
+    });
   }
 
   /**

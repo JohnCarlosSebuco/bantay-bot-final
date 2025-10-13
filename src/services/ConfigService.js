@@ -14,6 +14,11 @@ class ConfigService {
       mainBoardIP: CONFIG.MAIN_ESP32_IP,
       mainBoardPort: CONFIG.MAIN_ESP32_PORT,
 
+      // mDNS Configuration
+      useMDNS: true,  // Use mDNS hostnames by default
+      cameraHostname: 'bantaybot-camera.local',
+      mainBoardHostname: 'bantaybot-main.local',
+
       // WiFi Credentials (for future WiFi provisioning via app)
       wifiSSID: '',
       wifiPassword: '',
@@ -48,6 +53,9 @@ class ConfigService {
         'camera_port',
         'main_board_ip',
         'main_board_port',
+        'use_mdns',
+        'camera_hostname',
+        'main_board_hostname',
         'wifi_ssid',
         'wifi_password',
         'update_interval',
@@ -75,6 +83,15 @@ class ConfigService {
               break;
             case 'main_board_port':
               this.config.mainBoardPort = parseInt(value);
+              break;
+            case 'use_mdns':
+              this.config.useMDNS = JSON.parse(value);
+              break;
+            case 'camera_hostname':
+              this.config.cameraHostname = value;
+              break;
+            case 'main_board_hostname':
+              this.config.mainBoardHostname = value;
               break;
             case 'wifi_ssid':
               this.config.wifiSSID = value;
@@ -128,6 +145,9 @@ class ConfigService {
         ['camera_port', this.config.cameraPort.toString()],
         ['main_board_ip', this.config.mainBoardIP],
         ['main_board_port', this.config.mainBoardPort.toString()],
+        ['use_mdns', JSON.stringify(this.config.useMDNS)],
+        ['camera_hostname', this.config.cameraHostname],
+        ['main_board_hostname', this.config.mainBoardHostname],
         ['wifi_ssid', this.config.wifiSSID],
         ['wifi_password', this.config.wifiPassword],
         ['update_interval', this.config.updateInterval.toString()],
@@ -276,6 +296,76 @@ class ConfigService {
       mainBoard: mainResult,
       allConnected: cameraResult.success && mainResult.success,
     };
+  }
+
+  /**
+   * Get camera connection strategy (mDNS first, then IP)
+   * Returns array of URLs to try in order
+   */
+  getCameraConnectionStrategy() {
+    const strategies = [];
+
+    if (this.config.useMDNS) {
+      strategies.push({
+        type: 'mdns',
+        url: `http://${this.config.cameraHostname}:${this.config.cameraPort}`,
+        wsUrl: `ws://${this.config.cameraHostname}:${this.config.cameraPort}/ws`,
+      });
+    }
+
+    strategies.push({
+      type: 'ip',
+      url: `http://${this.config.cameraIP}:${this.config.cameraPort}`,
+      wsUrl: `ws://${this.config.cameraIP}:${this.config.cameraPort}/ws`,
+    });
+
+    return strategies;
+  }
+
+  /**
+   * Get main board connection strategy (mDNS first, then IP)
+   * Returns array of URLs to try in order
+   */
+  getMainBoardConnectionStrategy() {
+    const strategies = [];
+
+    if (this.config.useMDNS) {
+      strategies.push({
+        type: 'mdns',
+        url: `http://${this.config.mainBoardHostname}:${this.config.mainBoardPort}`,
+      });
+    }
+
+    strategies.push({
+      type: 'ip',
+      url: `http://${this.config.mainBoardIP}:${this.config.mainBoardPort}`,
+    });
+
+    return strategies;
+  }
+
+  /**
+   * Get best camera URL (try mDNS first if enabled)
+   */
+  getBestCameraURL() {
+    const strategies = this.getCameraConnectionStrategy();
+    return strategies[0].url; // Return first strategy
+  }
+
+  /**
+   * Get best camera WebSocket URL
+   */
+  getBestCameraWebSocketURL() {
+    const strategies = this.getCameraConnectionStrategy();
+    return strategies[0].wsUrl;
+  }
+
+  /**
+   * Get best main board URL
+   */
+  getBestMainBoardURL() {
+    const strategies = this.getMainBoardConnectionStrategy();
+    return strategies[0].url;
   }
 }
 

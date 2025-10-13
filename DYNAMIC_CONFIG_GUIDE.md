@@ -15,10 +15,12 @@ This guide explains the new dynamic configuration system that eliminates hardcod
 
 ### Arduino (ESP32)
 ✅ **WiFi Manager** - No more hardcoded WiFi credentials!
-✅ **Captive Portal** - Easy setup via phone/computer browser
+✅ **Enhanced Setup Portal** - Shows IP address on success page with 30-second display (no Serial Monitor needed!)
 ✅ **Persistent Storage** - Settings saved to ESP32 flash memory
 ✅ **mDNS Broadcasting** - Access boards via `bantaybot-main.local` and `bantaybot-camera.local`
 ✅ **Auto-Fallback** - If WiFi fails, automatically switches to setup mode
+✅ **Info Endpoint** - `/info` endpoint returns board status in JSON format
+✅ **Reset Endpoint** - `/reset-config` endpoint to clear stored credentials
 
 ---
 
@@ -36,8 +38,11 @@ This guide explains the new dynamic configuration system that eliminates hardcod
    - WiFi SSID: Your home/network WiFi name
    - WiFi Password: Your WiFi password
 7. **Click "Save & Connect"**
-8. The board will restart and connect to your WiFi
-9. **Note the IP address** shown in Serial Monitor (e.g., `172.24.26.193`)
+8. **The board will connect to WiFi and show the IP address on the success page**
+   - A large display will show the assigned IP (e.g., `172.24.26.193`)
+   - The board will restart automatically after 30 seconds
+   - **No Serial Monitor needed!** The IP is shown directly in your browser
+9. **Write down the IP address** or take a screenshot before the 30-second timer expires
 
 ### Step 2: Configure Camera Board ESP32-CAM
 
@@ -53,8 +58,12 @@ This guide explains the new dynamic configuration system that eliminates hardcod
    - Main Board IP: The IP you noted from Step 1 (e.g., `172.24.26.193`)
    - Main Board Port: `81` (default)
 7. **Click "Save & Connect"**
-8. The board will restart and connect to your WiFi
-9. **Note the Camera IP address** from Serial Monitor
+8. **The board will connect and show BOTH IP addresses on the success page**:
+   - Camera Board IP (e.g., `172.24.26.194`)
+   - Main Board IP (confirms connection)
+   - The board will restart automatically after 30 seconds
+   - **No Serial Monitor needed!** All info is shown in your browser
+9. **Write down the Camera IP address** or take a screenshot
 
 ### Step 3: Configure Mobile App
 
@@ -76,39 +85,59 @@ This guide explains the new dynamic configuration system that eliminates hardcod
 
 ## Using the System
 
-### Accessing Boards via mDNS (Optional)
+### Automatic mDNS with Fallback
 
-Instead of remembering IP addresses, you can access boards via hostnames:
-- **Main Board**: `http://bantaybot-main.local:81`
-- **Camera Board**: `http://bantaybot-camera.local:80`
+The app now uses **smart connection strategies** with automatic fallback:
 
-**Note**: mDNS may not work on all networks. If it doesn't work, use IP addresses.
+1. **First attempt**: Tries mDNS hostnames
+   - Main Board: `bantaybot-main.local:81`
+   - Camera Board: `bantaybot-camera.local:80`
+2. **Fallback**: If mDNS fails, automatically tries saved IP addresses
+3. **No configuration needed**: The app handles this automatically!
+
+**Benefits**:
+- No need to remember IP addresses
+- Works even if router assigns new IPs
+- Automatic fallback ensures reliability
+- No extra setup required
+
+**Note**: You can disable mDNS in Settings if needed (defaults to enabled)
 
 ### Changing WiFi Network
 
 If you need to connect to a different WiFi network:
 
-**Method 1: Use the App**
-- Go to Settings
-- Change the WiFi credentials in app settings
-- The boards will automatically reconnect on next restart
-
-**Method 2: Reset Configuration**
-1. Connect to the board via Serial Monitor
-2. Power cycle the board while holding the BOOT button
-3. The board will clear saved credentials and enter setup mode
+**Method 1: Reset via Endpoint** (Easiest - No Serial Monitor!)
+1. Connect to the board's current IP in your browser
+2. Go to: `http://[board-ip]/reset-config`
+   - Main Board: `http://[main-ip]:81/reset-config`
+   - Camera Board: `http://[camera-ip]:80/reset-config`
+3. The board will clear credentials and restart in setup mode
 4. Follow the First Time Setup steps again
+
+**Method 2: Physical Reset**
+1. Power cycle the board while holding the BOOT button
+2. The board will clear saved credentials and enter setup mode
+3. Follow the First Time Setup steps again
 
 ### Network Auto-Discovery
 
-The mobile app can automatically find your BantayBot devices:
+The mobile app uses **smart discovery** to find your BantayBot devices:
 
 1. Open Settings
 2. Tap "Scan Network"
-3. The app will scan your network (takes ~30-60 seconds)
-4. Found devices are automatically filled in
-5. Tap "Test Connections" to verify
-6. Save settings
+3. **Phase 1**: App tries mDNS first (fast - a few seconds)
+   - If devices are found via mDNS, discovery completes immediately
+4. **Phase 2**: If mDNS fails, falls back to IP scanning (30-60 seconds)
+   - Scans common IP ranges on your network
+5. Found devices are automatically filled in
+6. Tap "Test Connections" to verify
+7. Save settings
+
+**Smart features**:
+- Detects if mDNS is available and configures accordingly
+- Shows connection method used (mDNS or IP scan)
+- Minimizes wait time by trying fast methods first
 
 ---
 
@@ -195,7 +224,9 @@ Benefits:
 ### Configuration Endpoints
 
 **Main Board** (`http://[IP]:81`):
-- `/status` - Get sensor data
+- `/status` - Get sensor data (JSON)
+- `/info` - Get board info (WiFi status, IP, hostname, etc.)
+- `/reset-config` - Clear stored credentials and restart in setup mode
 - `/play?track=N` - Play audio track
 - `/volume?level=N` - Set volume
 - `/move-arms` - Trigger servo oscillation
@@ -205,7 +236,14 @@ Benefits:
 **Camera Board** (`http://[IP]:80`):
 - `/stream` - View camera stream
 - `/cam.mjpeg` - MJPEG stream endpoint
+- `/info` - Get board info (WiFi status, IP, hostname, Main Board config)
+- `/reset-config` - Clear stored credentials and restart in setup mode
 - WebSocket `/ws` - Real-time detection alerts
+
+**New endpoints** (`/info` and `/reset-config`):
+- No Serial Monitor needed - get all info via HTTP
+- Reset configuration remotely without physical access
+- Returns JSON data for easy integration
 
 ---
 
@@ -233,11 +271,24 @@ To add new configurable settings:
 
 ### Network Discovery Algorithm
 
-The NetworkDiscoveryService uses:
+The NetworkDiscoveryService uses **smart discovery** with multiple strategies:
+
+**Phase 1: mDNS Discovery** (Fast - 3 seconds)
+- Tests `bantaybot-main.local:81` and `bantaybot-camera.local:80`
+- If successful, returns immediately (no IP scan needed)
+- Works even if DHCP assigns different IPs
+
+**Phase 2: IP Scanning** (Fallback - 30-60 seconds)
 - **Quick Scan**: Scans IP ranges 1-50, 100-150, 200-255
 - **Full Scan**: Scans entire subnet (1-255)
 - **Port Testing**: Tests port 80 (camera) and 81 (main board)
 - **Timeout**: 2 seconds per IP
+- **Batch Processing**: Scans 10 IPs at a time to avoid network congestion
+
+**Connection Strategy**:
+- All services (WebSocket, MainBoard) try mDNS first, then fall back to IP
+- Automatic strategy selection based on what works
+- No user intervention required
 
 ### Security Considerations
 
@@ -259,17 +310,34 @@ const char* mainBoardIP = "172.24.26.193";
 ❌ Had to edit code for every WiFi change
 ❌ Had to recompile and upload firmware
 ❌ Different credentials for different locations
+❌ Required Serial Monitor to see IP addresses
+❌ IP changes broke everything
 
-### After (Dynamic)
+### After (Dynamic with mDNS)
 ```cpp
 Preferences preferences;
 String wifiSSID = preferences.getString("ssid", "");
 String wifiPassword = preferences.getString("password", "");
+
+// mDNS for hostname resolution
+MDNS.begin("bantaybot-main");
 ```
 ✅ Configure via web browser (no code changes!)
 ✅ Automatically saves to flash memory
 ✅ Works with any WiFi network
 ✅ Automatic fallback to setup mode
+✅ **No Serial Monitor needed** - IP shown on success page
+✅ **mDNS support** - use hostnames instead of IPs
+✅ **Smart fallback** - tries mDNS first, then IP
+✅ **Remote reset** - `/reset-config` endpoint
+
+### Backward Compatibility
+
+The new system is **100% backward compatible**:
+- Existing IP-based configurations continue to work
+- mDNS is optional (can be disabled in Settings)
+- All existing endpoints remain unchanged
+- Apps update seamlessly without breaking changes
 
 ---
 
@@ -278,11 +346,15 @@ String wifiPassword = preferences.getString("password", "");
 1. **No More Code Changes**: Configure everything via UI
 2. **Portable**: Works on any WiFi network without modifications
 3. **User-Friendly**: Simple web portal for configuration
-4. **Automatic Discovery**: App can find devices automatically
+4. **Automatic Discovery**: App can find devices automatically via smart discovery
 5. **Persistent**: Configuration survives power cycles
 6. **Fallback Mode**: Auto-enters setup if WiFi fails
-7. **mDNS Support**: Access via friendly hostnames
+7. **mDNS Support with Fallback**: Access via friendly hostnames, automatically falls back to IP
 8. **Separate Configuration**: Camera and Main Board configured independently
+9. **No Serial Monitor Needed**: IP addresses shown on success page with 30-second display
+10. **Remote Management**: Reset configuration via `/reset-config` endpoint
+11. **Production Ready**: Designed for deployment inside robot with no physical access needed
+12. **Smart Connection**: Tries fastest method first (mDNS) then falls back automatically
 
 ---
 
@@ -300,10 +372,26 @@ For issues or questions:
 
 ## Summary
 
-You now have a fully dynamic configuration system for BantayBot! No more hardcoded values means:
+You now have a **production-ready, fully dynamic configuration system** for BantayBot!
+
+**No more hardcoded values** means:
 - Easier deployment
 - Better user experience
 - More flexibility
 - Less maintenance
 
-Enjoy your WiFi-agnostic BantayBot! 🤖
+**No more Serial Monitor dependency** means:
+- True production readiness
+- Deploy inside robot without worry
+- Remote configuration and reset
+- User-friendly setup experience
+
+**Smart mDNS with fallback** means:
+- Reliable connections even when IPs change
+- Automatic discovery and fallback
+- Fast connection attempts (mDNS first)
+- Works on any network configuration
+
+**The system is fully backward compatible** - existing setups continue to work while benefiting from new features!
+
+Enjoy your WiFi-agnostic, production-ready BantayBot! 🤖
