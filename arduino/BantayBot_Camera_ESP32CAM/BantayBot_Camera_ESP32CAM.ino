@@ -464,20 +464,50 @@ void triggerMainBoardAlarm() {
   }
 
   HTTPClient http;
-  String url = "http://" + mainBoardIP + ":" + String(mainBoardPort) + "/trigger-alarm";
+  bool success = false;
 
-  http.begin(url);
-  http.setTimeout(2000);  // 2 second timeout
+  // Strategy 1: Try mDNS hostname first
+  if (mainBoardIP.indexOf(".local") > 0) {
+    String url = "http://" + mainBoardIP + ":" + String(mainBoardPort) + "/trigger-alarm";
+    http.begin(url);
+    http.setTimeout(3000);  // 3 second timeout for mDNS
 
-  int httpCode = http.GET();
+    int httpCode = http.GET();
+    http.end();
 
-  if (httpCode > 0) {
-    Serial.printf("✅ Main board triggered! Response: %d\n", httpCode);
-  } else {
-    Serial.printf("❌ Failed to trigger main board: %s\n", http.errorToString(httpCode).c_str());
+    if (httpCode > 0) {
+      Serial.printf("✅ Main board triggered via mDNS! Response: %d\n", httpCode);
+      success = true;
+    } else {
+      Serial.printf("⚠️ mDNS failed (%s), trying IP resolution...\n", http.errorToString(httpCode).c_str());
+    }
   }
 
-  http.end();
+  // Strategy 2: If mDNS failed, try resolving to IP
+  if (!success) {
+    IPAddress mainIP;
+    if (MDNS.queryHost("bantaybot-main", mainIP)) {
+      String url = "http://" + mainIP.toString() + ":" + String(mainBoardPort) + "/trigger-alarm";
+      http.begin(url);
+      http.setTimeout(3000);
+
+      int httpCode = http.GET();
+      http.end();
+
+      if (httpCode > 0) {
+        Serial.printf("✅ Main board triggered via resolved IP! Response: %d\n", httpCode);
+        success = true;
+      } else {
+        Serial.printf("❌ Failed to trigger via resolved IP: %s\n", http.errorToString(httpCode).c_str());
+      }
+    } else {
+      Serial.println("❌ Failed to resolve bantaybot-main via mDNS");
+    }
+  }
+
+  if (!success) {
+    Serial.println("❌ All connection strategies failed");
+  }
 }
 
 void convertToGrayscale(camera_fb_t *fb, uint8_t *grayBuffer) {
