@@ -316,7 +316,7 @@ void setupConfigServer() {
 
       Serial.println("Attempting WiFi connection...");
       int attempts = 0;
-      while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+      while (WiFi.status() != WL_CONNECTED && attempts < 20) {
         delay(500);
         Serial.print(".");
         attempts++;

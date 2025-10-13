@@ -411,8 +411,8 @@ void setupConfigServer() {
     }
   });
 
-  server.begin();
-  Serial.println("✅ Configuration server started on port 81");
+  // Don't call server.begin() here - it will be called in setupHTTPServer()
+  Serial.println("✅ Configuration routes registered");
 }
 
 // ===========================
