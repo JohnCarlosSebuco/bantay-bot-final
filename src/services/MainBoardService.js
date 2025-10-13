@@ -1,4 +1,5 @@
 import { CONFIG } from '../config/config';
+import ConfigService from './ConfigService';
 
 /**
  * HTTP-based service for Main ESP32 Control Board
@@ -6,11 +7,27 @@ import { CONFIG } from '../config/config';
  */
 class MainBoardService {
   constructor() {
-    this.baseUrl = `http://${CONFIG.MAIN_ESP32_IP}:${CONFIG.MAIN_ESP32_PORT}`;
+    this.updateBaseUrl();
     this.pollingInterval = null;
     this.listeners = {};
     this.isConnected = false;
     this.lastData = null;
+
+    // Subscribe to config changes
+    ConfigService.subscribe((config) => {
+      this.updateBaseUrl();
+    });
+  }
+
+  /**
+   * Update base URL from ConfigService or CONFIG
+   */
+  updateBaseUrl() {
+    const config = ConfigService.isInitialized ? ConfigService.get() : CONFIG;
+    const mainIP = config.mainBoardIP || CONFIG.MAIN_ESP32_IP;
+    const mainPort = config.mainBoardPort || CONFIG.MAIN_ESP32_PORT;
+    this.baseUrl = `http://${mainIP}:${mainPort}`;
+    console.log(`📡 Main Board URL updated: ${this.baseUrl}`);
   }
 
   /**

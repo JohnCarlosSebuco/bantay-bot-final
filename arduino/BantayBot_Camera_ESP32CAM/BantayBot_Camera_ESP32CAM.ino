@@ -3,7 +3,7 @@
  * Provides camera streaming and basic sensor data via HTTP/WebSocket
  *
  * Hardware: AI Thinker ESP32-CAM
- * Features: Camera stream, motion detection, WebSocket communication
+ * Features: Camera stream, motion detection, WebSocket communication + WiFi Manager + mDNS
  */
 
 #include "esp_camera.h"
@@ -12,21 +12,25 @@
 #include <AsyncWebSocket.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
+#include <ESPmDNS.h>
 
 // Camera model configuration
 #include "board_config.h"
 
 // ===========================
-// WiFi Credentials (CHANGE THESE!)
+// WiFi Configuration with Preferences
 // ===========================
-const char *ssid = "Prince";
-const char *password = "mamamoblue";
+Preferences preferences;
+String wifiSSID = "";
+String wifiPassword = "";
+String mainBoardIP = "";
+int mainBoardPort = 81;
+bool wifiConfigured = false;
 
-// ===========================
-// Main Board Configuration
-// ===========================
-const char *mainBoardIP = "172.24.26.193";  // Main board's actual IP: 172.24.26.193
-const int mainBoardPort = 81;
+// WiFi Manager AP settings
+const char* apSSID = "BantayBot-Camera-Setup";
+const char* apPassword = "bantaybot123";  // Default password for setup AP
 
 // ===========================
 // Web Server & WebSocket
@@ -157,16 +161,50 @@ void setup() {
   setupLedFlash();
 #endif
 
-  // WiFi connection
-  WiFi.begin(ssid, password);
-  WiFi.setSleep(false);
+  // ---- WiFi Configuration with Preferences ----
+  preferences.begin("bantaybot-cam", false);
+  wifiSSID = preferences.getString("ssid", "");
+  wifiPassword = preferences.getString("password", "");
+  mainBoardIP = preferences.getString("mainIP", "");
+  mainBoardPort = preferences.getInt("mainPort", 81);
 
-  Serial.print("📡 WiFi connecting");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  if (wifiSSID.length() > 0 && wifiPassword.length() > 0) {
+    wifiConfigured = true;
+    Serial.println("📡 Found saved WiFi credentials");
+    Serial.print("   SSID: ");
+    Serial.println(wifiSSID);
+
+    WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+    WiFi.setSleep(false);
+
+    Serial.print("📡 Connecting to WiFi");
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\n✅ WiFi connected");
+      Serial.print("📍 IP Address: ");
+      Serial.println(WiFi.localIP());
+
+      // Start mDNS
+      if (MDNS.begin("bantaybot-camera")) {
+        Serial.println("✅ mDNS responder started: bantaybot-camera.local");
+        MDNS.addService("http", "tcp", 80);
+      }
+    } else {
+      Serial.println("\n⚠️ WiFi connection failed - starting AP mode");
+      startAPMode();
+      return;  // Skip rest of setup until configured
+    }
+  } else {
+    Serial.println("⚠️ No WiFi credentials found - starting AP mode");
+    startAPMode();
+    return;  // Skip rest of setup until configured
   }
-  Serial.println("\n✅ WiFi connected");
 
   // Setup bird detection
   setupBirdDetection();
@@ -199,6 +237,86 @@ void loop() {
   }
 
   delay(10);
+}
+
+// ===========================
+// WiFi Manager Functions
+// ===========================
+void startAPMode() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(apSSID, apPassword);
+
+  IPAddress IP = WiFi.softAPIP();
+  Serial.println("🔧 Setup Mode - Access Point Started");
+  Serial.print("📡 SSID: ");
+  Serial.println(apSSID);
+  Serial.print("🔑 Password: ");
+  Serial.println(apPassword);
+  Serial.print("📍 IP Address: ");
+  Serial.println(IP);
+  Serial.println("🌐 Open browser and go to: http://192.168.4.1");
+
+  // Setup configuration web page
+  setupConfigServer();
+
+  // Keep running the config server
+  while (true) {
+    // Handle AsyncWebServer events
+    delay(10);
+  }
+}
+
+void setupConfigServer() {
+  // Serve configuration page
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    String html = "<html><head><title>BantayBot Camera Setup</title>";
+    html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+    html += "<style>body{font-family:Arial;margin:20px;background:#f0f0f0;}";
+    html += ".container{max-width:400px;margin:auto;background:white;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);}";
+    html += "h1{color:#FF5722;text-align:center;}input,button{width:100%;padding:10px;margin:10px 0;border-radius:5px;border:1px solid #ddd;}";
+    html += "button{background:#FF5722;color:white;border:none;cursor:pointer;font-size:16px;}button:hover{background:#E64A19;}</style></head>";
+    html += "<body><div class='container'><h1>📷 BantayBot Camera</h1><h3>WiFi & Main Board Configuration</h3>";
+    html += "<form action='/save' method='POST'>";
+    html += "<label>WiFi SSID:</label><input name='ssid' placeholder='Enter WiFi SSID' required>";
+    html += "<label>WiFi Password:</label><input name='password' type='password' placeholder='Enter WiFi Password' required>";
+    html += "<label>Main Board IP:</label><input name='mainIP' placeholder='192.168.1.xxx' required>";
+    html += "<label>Main Board Port:</label><input name='mainPort' value='81' type='number' required>";
+    html += "<button type='submit'>Save & Connect</button></form></div></body></html>";
+    request->send(200, "text/html", html);
+  });
+
+  // Save configuration
+  server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
+    String newSSID = "";
+    String newPassword = "";
+    String newMainIP = "";
+    int newMainPort = 81;
+
+    if (request->hasParam("ssid", true)) newSSID = request->getParam("ssid", true)->value();
+    if (request->hasParam("password", true)) newPassword = request->getParam("password", true)->value();
+    if (request->hasParam("mainIP", true)) newMainIP = request->getParam("mainIP", true)->value();
+    if (request->hasParam("mainPort", true)) newMainPort = request->getParam("mainPort", true)->value().toInt();
+
+    if (newSSID.length() > 0) {
+      preferences.putString("ssid", newSSID);
+      preferences.putString("password", newPassword);
+      preferences.putString("mainIP", newMainIP);
+      preferences.putInt("mainPort", newMainPort);
+
+      String html = "<html><head><title>Saved</title><meta http-equiv='refresh' content='5;url=/'>";
+      html += "<style>body{font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;}</style></head>";
+      html += "<body><h1>✅ Saved!</h1><p>Restarting to connect to WiFi...</p></body></html>";
+      request->send(200, "text/html", html);
+
+      delay(2000);
+      ESP.restart();
+    } else {
+      request->send(400, "text/plain", "Invalid credentials");
+    }
+  });
+
+  server.begin();
+  Serial.println("✅ Configuration server started");
 }
 
 // ===========================
@@ -290,8 +408,13 @@ void performBirdDetection() {
 // Trigger Main Board Alarm
 // ===========================
 void triggerMainBoardAlarm() {
+  if (mainBoardIP.length() == 0) {
+    Serial.println("⚠️ Main board IP not configured, skipping alarm trigger");
+    return;
+  }
+
   HTTPClient http;
-  String url = "http://" + String(mainBoardIP) + ":" + String(mainBoardPort) + "/trigger-alarm";
+  String url = "http://" + mainBoardIP + ":" + String(mainBoardPort) + "/trigger-alarm";
 
   http.begin(url);
   http.setTimeout(2000);  // 2 second timeout

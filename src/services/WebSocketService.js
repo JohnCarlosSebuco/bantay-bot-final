@@ -1,5 +1,6 @@
 import { CONFIG } from '../config/config';
 import MainBoardService from './MainBoardService';
+import ConfigService from './ConfigService';
 
 class WebSocketService {
   constructor() {
@@ -48,13 +49,19 @@ class WebSocketService {
   /**
    * Connect to Camera ESP32-CAM
    */
-  connectCamera(ip = CONFIG.CAMERA_ESP32_IP, path = CONFIG.CAMERA_WEBSOCKET_PATH) {
+  connectCamera(ip = null, path = CONFIG.CAMERA_WEBSOCKET_PATH) {
     if (this.isCameraConnecting || (this.cameraWs && this.cameraWs.readyState === WebSocket.OPEN)) {
       return;
     }
 
     this.isCameraConnecting = true;
-    const url = `ws://${ip}:${CONFIG.CAMERA_ESP32_PORT}${path}`;
+
+    // Use ConfigService if available, fallback to CONFIG
+    const config = ConfigService.isInitialized ? ConfigService.get() : CONFIG;
+    const cameraIP = ip || config.cameraIP || CONFIG.CAMERA_ESP32_IP;
+    const cameraPort = config.cameraPort || CONFIG.CAMERA_ESP32_PORT;
+
+    const url = `ws://${cameraIP}:${cameraPort}${path}`;
     console.log('Connecting to Camera Board:', url);
 
     try {

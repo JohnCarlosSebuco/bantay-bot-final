@@ -12,6 +12,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -20,20 +21,36 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LocaleContext, saveLang } from '../i18n/i18n';
 import SpeakerControl from '../components/SpeakerControl';
 import { useTheme } from '../theme/ThemeContext';
+import ConfigService from '../services/ConfigService';
+import NetworkDiscoveryService from '../services/NetworkDiscoveryService';
 
 const SettingsScreen = () => {
   const { lang, setLang } = useContext(LocaleContext);
   const { theme, isDark, toggleTheme } = useTheme();
-  const [esp32IP, setEsp32IP] = useState(CONFIG.ESP32_IP);
-  const [wsPort, setWsPort] = useState(CONFIG.ESP32_PORT.toString());
+
+  // Separate IPs for Camera and Main Board
+  const [cameraIP, setCameraIP] = useState(CONFIG.CAMERA_ESP32_IP);
+  const [cameraPort, setCameraPort] = useState(CONFIG.CAMERA_ESP32_PORT.toString());
+  const [mainBoardIP, setMainBoardIP] = useState(CONFIG.MAIN_ESP32_IP);
+  const [mainBoardPort, setMainBoardPort] = useState(CONFIG.MAIN_ESP32_PORT.toString());
+
   const [updateInterval, setUpdateInterval] = useState(CONFIG.UPDATE_INTERVAL.toString());
   const [notifications, setNotifications] = useState(true);
   const [autoReconnect, setAutoReconnect] = useState(true);
   const [volume, setVolume] = useState(1.0);
   const [isMuted, setIsMuted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('Not tested');
+  const [connectionStatus, setConnectionStatus] = useState({
+    camera: 'Not tested',
+    mainBoard: 'Not tested',
+  });
   const [refreshing, setRefreshing] = useState(false);
+
+  // Network discovery state
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [foundDevices, setFoundDevices] = useState([]);
+
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -56,21 +73,18 @@ const SettingsScreen = () => {
 
   const loadSettings = async () => {
     try {
-      const savedIP = await AsyncStorage.getItem('esp32_ip');
-      const savedPort = await AsyncStorage.getItem('ws_port');
-      const savedInterval = await AsyncStorage.getItem('update_interval');
-      const savedNotifications = await AsyncStorage.getItem('notifications');
-      const savedAutoReconnect = await AsyncStorage.getItem('auto_reconnect');
-      const savedVolume = await AsyncStorage.getItem('volume');
-      const savedMuted = await AsyncStorage.getItem('is_muted');
+      await ConfigService.initialize();
+      const config = ConfigService.get();
 
-      if (savedIP) setEsp32IP(savedIP);
-      if (savedPort) setWsPort(savedPort);
-      if (savedInterval) setUpdateInterval(savedInterval);
-      if (savedNotifications !== null) setNotifications(JSON.parse(savedNotifications));
-      if (savedAutoReconnect !== null) setAutoReconnect(JSON.parse(savedAutoReconnect));
-      if (savedVolume !== null) setVolume(parseFloat(savedVolume));
-      if (savedMuted !== null) setIsMuted(JSON.parse(savedMuted));
+      setCameraIP(config.cameraIP);
+      setCameraPort(config.cameraPort.toString());
+      setMainBoardIP(config.mainBoardIP);
+      setMainBoardPort(config.mainBoardPort.toString());
+      setUpdateInterval(config.updateInterval.toString());
+      setNotifications(config.notifications);
+      setAutoReconnect(config.autoReconnect);
+      setVolume(config.volume);
+      setIsMuted(config.isMuted);
     } catch (error) {
       console.error('Error loading settings:', error);
     }
@@ -80,18 +94,23 @@ const SettingsScreen = () => {
     setIsLoading(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     try {
-      await AsyncStorage.multiSet([
-        ['esp32_ip', esp32IP],
-        ['ws_port', wsPort],
-        ['update_interval', updateInterval],
-        ['notifications', JSON.stringify(notifications)],
-        ['auto_reconnect', JSON.stringify(autoReconnect)],
-        ['volume', volume.toString()],
-        ['is_muted', JSON.stringify(isMuted)]
-      ]);
+      await ConfigService.update({
+        cameraIP,
+        cameraPort: parseInt(cameraPort),
+        mainBoardIP,
+        mainBoardPort: parseInt(mainBoardPort),
+        updateInterval: parseInt(updateInterval),
+        notifications,
+        autoReconnect,
+        volume,
+        isMuted,
+      });
 
-      CONFIG.ESP32_IP = esp32IP;
-      CONFIG.ESP32_PORT = parseInt(wsPort);
+      // Update global CONFIG for backward compatibility
+      CONFIG.CAMERA_ESP32_IP = cameraIP;
+      CONFIG.CAMERA_ESP32_PORT = parseInt(cameraPort);
+      CONFIG.MAIN_ESP32_IP = mainBoardIP;
+      CONFIG.MAIN_ESP32_PORT = parseInt(mainBoardPort);
       CONFIG.UPDATE_INTERVAL = parseInt(updateInterval);
 
       Alert.alert(
@@ -112,37 +131,114 @@ const SettingsScreen = () => {
 
   const testConnection = async () => {
     setIsLoading(true);
-    setConnectionStatus('Testing...');
+    setConnectionStatus({ camera: 'Testing...', mainBoard: 'Testing...' });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
-      const response = await fetch(`http://${esp32IP}:80/status`, {
-        timeout: 5000
+      // Test both connections
+      const [cameraResult, mainResult] = await Promise.allSettled([
+        fetch(`http://${cameraIP}:${cameraPort}/stream`, { timeout: 5000 }),
+        fetch(`http://${mainBoardIP}:${mainBoardPort}/status`, { timeout: 5000 }),
+      ]);
+
+      const cameraSuccess = cameraResult.status === 'fulfilled' && cameraResult.value.ok;
+      const mainSuccess = mainResult.status === 'fulfilled' && mainResult.value.ok;
+
+      setConnectionStatus({
+        camera: cameraSuccess ? 'Connected' : 'Failed',
+        mainBoard: mainSuccess ? 'Connected' : 'Failed',
       });
 
-      if (response.ok) {
-        setConnectionStatus('Connected');
+      if (cameraSuccess && mainSuccess) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert(
           lang === 'tl' ? 'Tagumpay ang Koneksyon' : 'Connection Success',
-          lang === 'tl' ? 'Matagumpay na nakakonekta sa BantayBot!' : 'Successfully connected to BantayBot!',
+          lang === 'tl'
+            ? 'Matagumpay na nakakonekta sa Camera at Main Board!'
+            : 'Successfully connected to Camera and Main Board!',
           [{ text: 'OK', style: 'default' }]
         );
       } else {
-        throw new Error('Connection failed');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        const failedBoards = [];
+        if (!cameraSuccess) failedBoards.push('Camera Board');
+        if (!mainSuccess) failedBoards.push('Main Board');
+
+        Alert.alert(
+          lang === 'tl' ? 'Nabigong Koneksyon' : 'Connection Failed',
+          lang === 'tl'
+            ? `Hindi makakonekta sa ${failedBoards.join(' at ')}. Pakisuri:\n• Naka-on ang ESP32\n• Parehong WiFi network\n• Tama ang IP address`
+            : `Could not connect to ${failedBoards.join(' and ')}. Please check:\n• ESP32 is powered on\n• Both devices are on same WiFi\n• IP address is correct`,
+          [{ text: 'OK', style: 'destructive' }]
+        );
       }
     } catch (error) {
-      setConnectionStatus('Failed');
+      setConnectionStatus({ camera: 'Failed', mainBoard: 'Failed' });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert(
         lang === 'tl' ? 'Nabigong Koneksyon' : 'Connection Failed',
-        lang === 'tl'
-          ? `Hindi makakonekta sa ${esp32IP}. Pakisuri:\n• Naka-on ang ESP32\n• Parehong WiFi network\n• Tama ang IP address`
-          : `Could not connect to ${esp32IP}. Please check:\n• ESP32 is powered on\n• Both devices are on same WiFi\n• IP address is correct`,
+        lang === 'tl' ? 'May error sa pagtest ng koneksyon' : 'Error testing connection',
         [{ text: 'OK', style: 'destructive' }]
       );
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const scanNetwork = async () => {
+    setIsScanning(true);
+    setScanProgress(0);
+    setFoundDevices([]);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    try {
+      // Extract base IP from current camera IP
+      const baseIP = NetworkDiscoveryService.getBaseIP(cameraIP);
+
+      const devices = await NetworkDiscoveryService.quickScan(
+        baseIP,
+        (progress, scanned, total) => {
+          setScanProgress(progress);
+        }
+      );
+
+      setFoundDevices(devices);
+
+      if (devices.length > 0) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+        // Auto-fill IPs if found
+        const cameraDevice = devices.find(d => d.type === 'camera');
+        const mainDevice = devices.find(d => d.type === 'main');
+
+        if (cameraDevice) setCameraIP(cameraDevice.ip);
+        if (mainDevice) setMainBoardIP(mainDevice.ip);
+
+        Alert.alert(
+          lang === 'tl' ? 'Nakita!' : 'Devices Found!',
+          lang === 'tl'
+            ? `Nakita ang ${devices.length} BantayBot device(s)!`
+            : `Found ${devices.length} BantayBot device(s)!`,
+          [{ text: 'OK', style: 'default' }]
+        );
+      } else {
+        Alert.alert(
+          lang === 'tl' ? 'Walang Nakita' : 'No Devices Found',
+          lang === 'tl'
+            ? 'Walang BantayBot devices na nakita. Siguraduhing naka-on ang ESP32 boards.'
+            : 'No BantayBot devices found. Make sure ESP32 boards are powered on.',
+          [{ text: 'OK', style: 'default' }]
+        );
+      }
+    } catch (error) {
+      Alert.alert(
+        lang === 'tl' ? 'Error sa Scan' : 'Scan Error',
+        lang === 'tl' ? 'May error sa pag-scan ng network' : 'Error scanning network',
+        [{ text: 'OK', style: 'destructive' }]
+      );
+    } finally {
+      setIsScanning(false);
+      setScanProgress(0);
     }
   };
 
@@ -157,14 +253,19 @@ const SettingsScreen = () => {
         {
           text: lang === 'tl' ? 'I-reset' : 'Reset',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-            setEsp32IP('192.168.1.100');
-            setWsPort('80');
-            setUpdateInterval('1000');
-            setNotifications(true);
-            setAutoReconnect(true);
-            setConnectionStatus('Not tested');
+            const defaults = await ConfigService.reset();
+            setCameraIP(defaults.cameraIP);
+            setCameraPort(defaults.cameraPort.toString());
+            setMainBoardIP(defaults.mainBoardIP);
+            setMainBoardPort(defaults.mainBoardPort.toString());
+            setUpdateInterval(defaults.updateInterval.toString());
+            setNotifications(defaults.notifications);
+            setAutoReconnect(defaults.autoReconnect);
+            setVolume(defaults.volume);
+            setIsMuted(defaults.isMuted);
+            setConnectionStatus({ camera: 'Not tested', mainBoard: 'Not tested' });
           }
         }
       ]
@@ -557,22 +658,42 @@ const SettingsScreen = () => {
               </View>
 
               <InputCard
-                title={lang === 'tl' ? 'ESP32 IP Address' : 'ESP32 IP Address'}
-                value={esp32IP}
-                onChangeText={setEsp32IP}
-                placeholder="192.168.1.100"
+                title={lang === 'tl' ? 'Camera Board IP Address' : 'Camera Board IP Address'}
+                value={cameraIP}
+                onChangeText={setCameraIP}
+                placeholder="172.24.26.144"
                 keyboardType="numeric"
-                description={lang === 'tl' ? 'Ang IP address ng iyong BantayBot ESP32' : 'The IP address of your BantayBot ESP32'}
-                icon="globe-outline"
+                description={lang === 'tl' ? 'Ang IP address ng Camera ESP32-CAM' : 'The IP address of Camera ESP32-CAM'}
+                icon="camera-outline"
               />
 
               <InputCard
-                title={lang === 'tl' ? 'WebSocket Port' : 'WebSocket Port'}
-                value={wsPort}
-                onChangeText={setWsPort}
+                title={lang === 'tl' ? 'Camera Board Port' : 'Camera Board Port'}
+                value={cameraPort}
+                onChangeText={setCameraPort}
+                placeholder="80"
+                keyboardType="numeric"
+                description={lang === 'tl' ? 'Port ng Camera Board' : 'Camera Board Port'}
+                icon="radio-outline"
+              />
+
+              <InputCard
+                title={lang === 'tl' ? 'Main Board IP Address' : 'Main Board IP Address'}
+                value={mainBoardIP}
+                onChangeText={setMainBoardIP}
+                placeholder="172.24.26.193"
+                keyboardType="numeric"
+                description={lang === 'tl' ? 'Ang IP address ng Main Control ESP32' : 'The IP address of Main Control ESP32'}
+                icon="hardware-chip-outline"
+              />
+
+              <InputCard
+                title={lang === 'tl' ? 'Main Board Port' : 'Main Board Port'}
+                value={mainBoardPort}
+                onChangeText={setMainBoardPort}
                 placeholder="81"
                 keyboardType="numeric"
-                description={lang === 'tl' ? 'Port para sa real-time communication' : 'Port for real-time communication'}
+                description={lang === 'tl' ? 'Port ng Main Board' : 'Main Board Port'}
                 icon="radio-outline"
               />
 
@@ -586,6 +707,40 @@ const SettingsScreen = () => {
                 icon="timer-outline"
               />
 
+              {/* Network Discovery */}
+              <View style={styles.connectionTestCard}>
+                <View style={styles.connectionHeader}>
+                  <Text style={styles.connectionTitle}>
+                    <Ionicons name="search-outline" size={18} color={theme.colors.warning[500]} />{' '}
+                    {lang === 'tl' ? 'Auto-Discovery' : 'Auto-Discovery'}
+                  </Text>
+                  {isScanning && (
+                    <Text style={styles.connectionStatus}>
+                      {Math.round(scanProgress)}%
+                    </Text>
+                  )}
+                </View>
+                <Text style={styles.inputDescription}>
+                  {lang === 'tl'
+                    ? 'I-scan ang network para hanapin ang BantayBot devices'
+                    : 'Scan network to find BantayBot devices automatically'}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.testButton, { backgroundColor: theme.colors.warning[500] }, isScanning && styles.buttonDisabled]}
+                  onPress={scanNetwork}
+                  disabled={isScanning}
+                >
+                  {isScanning ? (
+                    <ActivityIndicator color="white" />
+                  ) : (
+                    <Text style={styles.testButtonText}>
+                      <Ionicons name="radar-outline" size={18} color="white" />{' '}
+                      {lang === 'tl' ? 'I-scan ang Network' : 'Scan Network'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
               {/* Connection Test */}
               <View style={styles.connectionTestCard}>
                 <View style={styles.connectionHeader}>
@@ -593,22 +748,56 @@ const SettingsScreen = () => {
                     <Ionicons name="pulse-outline" size={18} color={theme.colors.info[500]} />{' '}
                     {lang === 'tl' ? 'Test ng Koneksyon' : 'Connection Test'}
                   </Text>
-                  <Text
-                    style={[
-                      styles.connectionStatus,
-                      {
-                        color:
-                          connectionStatus === 'Connected'
-                            ? theme.colors.success[600]
-                            : connectionStatus === 'Failed'
-                            ? theme.colors.error[600]
-                            : theme.colors.text.tertiary,
-                      },
-                    ]}
-                  >
-                    {connectionStatus}
-                  </Text>
                 </View>
+
+                {/* Camera Status */}
+                <View style={{ marginBottom: theme.spacing[2] }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: theme.spacing[1] }}>
+                    <Text style={styles.inputDescription}>
+                      <Ionicons name="camera" size={14} /> Camera Board
+                    </Text>
+                    <Text
+                      style={[
+                        styles.connectionStatus,
+                        {
+                          color:
+                            connectionStatus.camera === 'Connected'
+                              ? theme.colors.success[600]
+                              : connectionStatus.camera === 'Failed'
+                              ? theme.colors.error[600]
+                              : theme.colors.text.tertiary,
+                        },
+                      ]}
+                    >
+                      {connectionStatus.camera}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Main Board Status */}
+                <View style={{ marginBottom: theme.spacing[3] }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: theme.spacing[1] }}>
+                    <Text style={styles.inputDescription}>
+                      <Ionicons name="hardware-chip" size={14} /> Main Board
+                    </Text>
+                    <Text
+                      style={[
+                        styles.connectionStatus,
+                        {
+                          color:
+                            connectionStatus.mainBoard === 'Connected'
+                              ? theme.colors.success[600]
+                              : connectionStatus.mainBoard === 'Failed'
+                              ? theme.colors.error[600]
+                              : theme.colors.text.tertiary,
+                        },
+                      ]}
+                    >
+                      {connectionStatus.mainBoard}
+                    </Text>
+                  </View>
+                </View>
+
                 <TouchableOpacity
                   style={[styles.testButton, isLoading && styles.buttonDisabled]}
                   onPress={testConnection}
@@ -617,7 +806,7 @@ const SettingsScreen = () => {
                   <Text style={styles.testButtonText}>
                     {isLoading
                       ? (lang === 'tl' ? 'Sinusubok...' : 'Testing...')
-                      : (lang === 'tl' ? 'Subukan ang Koneksyon' : 'Test Connection')}
+                      : (lang === 'tl' ? 'Subukan ang Koneksyon' : 'Test Connections')}
                   </Text>
                 </TouchableOpacity>
               </View>

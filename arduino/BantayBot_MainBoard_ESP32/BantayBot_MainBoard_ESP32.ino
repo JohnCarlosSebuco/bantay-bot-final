@@ -5,7 +5,7 @@
  * Controls: Audio (DFPlayer), Servos (PCA9685), Stepper Motor, RS485 Soil Sensor, PIR
  * Hardware: ESP32 DevKit v1 or similar
  *
- * Features: WiFi connection + HTTP API for app control
+ * Features: WiFi connection + HTTP API for app control + WiFi Manager + mDNS
  */
 
 #include "DFRobotDFPlayerMini.h"
@@ -13,12 +13,20 @@
 #include <Adafruit_PWMServoDriver.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Preferences.h>
+#include <ESPmDNS.h>
 
 // ===========================
-// WiFi Configuration
+// WiFi Configuration with Preferences
 // ===========================
-const char* ssid = "YOUR_WIFI_SSID";        // Change this!
-const char* password = "YOUR_WIFI_PASSWORD";  // Change this!
+Preferences preferences;
+String wifiSSID = "";
+String wifiPassword = "";
+bool wifiConfigured = false;
+
+// WiFi Manager AP settings
+const char* apSSID = "BantayBot-Main-Setup";
+const char* apPassword = "bantaybot123";  // Default password for setup AP
 
 WebServer server(81);  // HTTP server on port 81
 
@@ -81,22 +89,43 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n🤖 BantayBot Main Board Starting...");
 
-  // ---- WiFi Connection ----
-  WiFi.begin(ssid, password);
-  Serial.print("📡 Connecting to WiFi");
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
+  // ---- WiFi Configuration with Preferences ----
+  preferences.begin("bantaybot", false);
+  wifiSSID = preferences.getString("ssid", "");
+  wifiPassword = preferences.getString("password", "");
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n✅ WiFi connected!");
-    Serial.print("📍 IP Address: ");
-    Serial.println(WiFi.localIP());
+  if (wifiSSID.length() > 0 && wifiPassword.length() > 0) {
+    wifiConfigured = true;
+    Serial.println("📡 Found saved WiFi credentials");
+    Serial.print("   SSID: ");
+    Serial.println(wifiSSID);
+
+    WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+    Serial.print("📡 Connecting to WiFi");
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\n✅ WiFi connected!");
+      Serial.print("📍 IP Address: ");
+      Serial.println(WiFi.localIP());
+
+      // Start mDNS
+      if (MDNS.begin("bantaybot-main")) {
+        Serial.println("✅ mDNS responder started: bantaybot-main.local");
+        MDNS.addService("http", "tcp", 81);
+      }
+    } else {
+      Serial.println("\n⚠️ WiFi connection failed - starting AP mode");
+      startAPMode();
+    }
   } else {
-    Serial.println("\n⚠️ WiFi failed - continuing without network");
+    Serial.println("⚠️ No WiFi credentials found - starting AP mode");
+    startAPMode();
   }
 
   // ---- DFPlayer ----
@@ -267,6 +296,69 @@ void updateServos() {
       }
     }
   }
+}
+
+// ===========================
+// WiFi Manager Functions
+// ===========================
+void startAPMode() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(apSSID, apPassword);
+
+  IPAddress IP = WiFi.softAPIP();
+  Serial.println("🔧 Setup Mode - Access Point Started");
+  Serial.print("📡 SSID: ");
+  Serial.println(apSSID);
+  Serial.print("🔑 Password: ");
+  Serial.println(apPassword);
+  Serial.print("📍 IP Address: ");
+  Serial.println(IP);
+  Serial.println("🌐 Open browser and go to: http://192.168.4.1");
+
+  // Setup configuration web page
+  setupConfigServer();
+}
+
+void setupConfigServer() {
+  // Serve configuration page
+  server.on("/", HTTP_GET, []() {
+    String html = "<html><head><title>BantayBot Main Board Setup</title>";
+    html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+    html += "<style>body{font-family:Arial;margin:20px;background:#f0f0f0;}";
+    html += ".container{max-width:400px;margin:auto;background:white;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);}";
+    html += "h1{color:#2196F3;text-align:center;}input,button{width:100%;padding:10px;margin:10px 0;border-radius:5px;border:1px solid #ddd;}";
+    html += "button{background:#2196F3;color:white;border:none;cursor:pointer;font-size:16px;}button:hover{background:#0b7dda;}</style></head>";
+    html += "<body><div class='container'><h1>🤖 BantayBot Main Board</h1><h3>WiFi Configuration</h3>";
+    html += "<form action='/save' method='POST'>";
+    html += "<label>WiFi SSID:</label><input name='ssid' placeholder='Enter WiFi SSID' required>";
+    html += "<label>WiFi Password:</label><input name='password' type='password' placeholder='Enter WiFi Password' required>";
+    html += "<button type='submit'>Save & Connect</button></form></div></body></html>";
+    server.send(200, "text/html", html);
+  });
+
+  // Save WiFi credentials
+  server.on("/save", HTTP_POST, []() {
+    String newSSID = server.arg("ssid");
+    String newPassword = server.arg("password");
+
+    if (newSSID.length() > 0) {
+      preferences.putString("ssid", newSSID);
+      preferences.putString("password", newPassword);
+
+      String html = "<html><head><title>Saved</title><meta http-equiv='refresh' content='5;url=/'>";
+      html += "<style>body{font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;}</style></head>";
+      html += "<body><h1>✅ Saved!</h1><p>Restarting to connect to WiFi...</p></body></html>";
+      server.send(200, "text/html", html);
+
+      delay(2000);
+      ESP.restart();
+    } else {
+      server.send(400, "text/plain", "Invalid credentials");
+    }
+  });
+
+  server.begin();
+  Serial.println("✅ Configuration server started on port 81");
 }
 
 // ===========================
