@@ -317,6 +317,12 @@ void startAPMode() {
 
   // Setup configuration web page
   setupConfigServer();
+
+  // Keep running the config server
+  while (true) {
+    server.handleClient();
+    delay(10);
+  }
 }
 
 void setupConfigServer() {
@@ -411,8 +417,8 @@ void setupConfigServer() {
     }
   });
 
-  // Don't call server.begin() here - it will be called in setupHTTPServer()
-  Serial.println("✅ Configuration routes registered");
+  server.begin();
+  Serial.println("✅ Configuration server started on port 81");
 }
 
 // ===========================

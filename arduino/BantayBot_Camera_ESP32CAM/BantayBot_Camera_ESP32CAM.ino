@@ -179,7 +179,7 @@ void setup() {
 
     Serial.print("📡 Connecting to WiFi");
     int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
       delay(500);
       Serial.print(".");
       attempts++;
