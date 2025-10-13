@@ -19,8 +19,8 @@
 // ===========================
 // WiFi Credentials (CHANGE THESE!)
 // ===========================
-const char *ssid = "YOUR_WIFI_SSID";
-const char *password = "YOUR_WIFI_PASSWORD";
+const char *ssid = "vivo Y16";
+const char *password = "00001111";
 
 // ===========================
 // Main Board Configuration
