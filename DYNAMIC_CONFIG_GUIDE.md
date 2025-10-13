@@ -52,18 +52,17 @@ This guide explains the new dynamic configuration system that eliminates hardcod
    - Password: `bantaybot123`
 4. **Connect your phone/computer** to this network
 5. **Open a browser** and go to: `http://192.168.4.1`
-6. **Enter configuration**:
+6. **Enter WiFi credentials**:
    - WiFi SSID: Your home/network WiFi name
    - WiFi Password: Your WiFi password
-   - Main Board IP: The IP you noted from Step 1 (e.g., `172.24.26.193`)
-   - Main Board Port: `81` (default)
+   - **That's it!** No Main Board IP needed - Camera will automatically connect to `bantaybot-main.local`
 7. **Click "Save & Connect"**
-8. **The board will connect and show BOTH IP addresses on the success page**:
+8. **The board will connect and show the Camera IP address**:
    - Camera Board IP (e.g., `172.24.26.194`)
-   - Main Board IP (confirms connection)
+   - Confirmation that it will connect to Main Board via mDNS
    - The board will restart automatically after 30 seconds
    - **No Serial Monitor needed!** All info is shown in your browser
-9. **Write down the Camera IP address** or take a screenshot
+9. **Write down the Camera IP address** or take a screenshot (optional - you can also use `bantaybot-camera.local`)
 
 ### Step 3: Configure Mobile App
 
@@ -350,7 +349,7 @@ The new system is **100% backward compatible**:
 5. **Persistent**: Configuration survives power cycles
 6. **Fallback Mode**: Auto-enters setup if WiFi fails
 7. **mDNS Support with Fallback**: Access via friendly hostnames, automatically falls back to IP
-8. **Separate Configuration**: Camera and Main Board configured independently
+8. **Simplified Setup**: Camera Board setup requires only WiFi credentials - no IP addresses needed!
 9. **No Serial Monitor Needed**: IP addresses shown on success page with 30-second display
 10. **Remote Management**: Reset configuration via `/reset-config` endpoint
 11. **Production Ready**: Designed for deployment inside robot with no physical access needed

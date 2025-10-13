@@ -275,12 +275,11 @@ void setupConfigServer() {
     html += ".container{max-width:400px;margin:auto;background:white;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);}";
     html += "h1{color:#FF5722;text-align:center;}input,button{width:100%;padding:10px;margin:10px 0;border-radius:5px;border:1px solid #ddd;}";
     html += "button{background:#FF5722;color:white;border:none;cursor:pointer;font-size:16px;}button:hover{background:#E64A19;}</style></head>";
-    html += "<body><div class='container'><h1>📷 BantayBot Camera</h1><h3>WiFi & Main Board Configuration</h3>";
+    html += "<body><div class='container'><h1>📷 BantayBot Camera</h1><h3>WiFi Configuration</h3>";
     html += "<form action='/save' method='POST'>";
     html += "<label>WiFi SSID:</label><input name='ssid' placeholder='Enter WiFi SSID' required>";
     html += "<label>WiFi Password:</label><input name='password' type='password' placeholder='Enter WiFi Password' required>";
-    html += "<label>Main Board IP:</label><input name='mainIP' placeholder='192.168.1.xxx' required>";
-    html += "<label>Main Board Port:</label><input name='mainPort' value='81' type='number' required>";
+    html += "<p style='color:#666;font-size:14px;margin-top:20px;'>ℹ️ Camera will automatically connect to Main Board using <strong>bantaybot-main.local</strong></p>";
     html += "<button type='submit'>Save & Connect</button></form></div></body></html>";
     request->send(200, "text/html", html);
   });
@@ -289,19 +288,16 @@ void setupConfigServer() {
   server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
     String newSSID = "";
     String newPassword = "";
-    String newMainIP = "";
-    int newMainPort = 81;
 
     if (request->hasParam("ssid", true)) newSSID = request->getParam("ssid", true)->value();
     if (request->hasParam("password", true)) newPassword = request->getParam("password", true)->value();
-    if (request->hasParam("mainIP", true)) newMainIP = request->getParam("mainIP", true)->value();
-    if (request->hasParam("mainPort", true)) newMainPort = request->getParam("mainPort", true)->value().toInt();
 
     if (newSSID.length() > 0) {
       preferences.putString("ssid", newSSID);
       preferences.putString("password", newPassword);
-      preferences.putString("mainIP", newMainIP);
-      preferences.putInt("mainPort", newMainPort);
+      // Default to mDNS hostname for Main Board
+      preferences.putString("mainIP", "bantaybot-main.local");
+      preferences.putInt("mainPort", 81);
 
       // Send connecting page
       String html = "<html><head><title>Connecting...</title>";
@@ -333,25 +329,26 @@ void setupConfigServer() {
         Serial.println(cameraIP);
 
         // Add success endpoint
-        server.on("/success", HTTP_GET, [cameraIP, newMainIP, newMainPort](AsyncWebServerRequest *req){
-          String successHtml = "<html><head><title>Success!</title><meta http-equiv='refresh' content='35;url=/'>";
+        server.on("/success", HTTP_GET, [cameraIP](AsyncWebServerRequest *req){
+          String successHtml = "<html><head><title>Success!</title><meta http-equiv='refresh' content='30;url=/'>";
           successHtml += "<style>body{font-family:Arial;text-align:center;padding:30px;background:#f0f0f0;}";
           successHtml += ".success{background:white;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);max-width:600px;margin:auto;}";
           successHtml += ".ip{font-size:28px;font-weight:bold;color:#FF5722;background:#fbe9e7;padding:15px;border-radius:8px;margin:15px 0;word-break:break-all;}";
-          successHtml += ".label{font-size:14px;color:#666;margin-top:5px;}</style></head>";
-          successHtml += "<body><div class='success'><h1>✅ Connected!</h1>";
-          successHtml += "<p>Write down these addresses:</p>";
-          successHtml += "<div class='label'>Camera Board IP:</div><div class='ip'>" + cameraIP + ":80</div>";
-          successHtml += "<div class='label'>Main Board IP:</div><div class='ip'>" + String(newMainIP) + ":" + String(newMainPort) + "</div>";
-          successHtml += "<p style='margin-top:25px;color:#666;'>⚡ Board will restart in 35 seconds...</p>";
-          successHtml += "<p style='color:#666;font-size:14px;'>💡 Or use hostnames:<br><strong>bantaybot-camera.local</strong><br><strong>bantaybot-main.local</strong></p></div></body></html>";
+          successHtml += ".label{font-size:14px;color:#666;margin-top:5px;}";
+          successHtml += ".info{background:#e3f2fd;padding:15px;border-radius:8px;margin:15px 0;font-size:14px;color:#1976d2;}</style></head>";
+          successHtml += "<body><div class='success'><h1>✅ Camera Connected!</h1>";
+          successHtml += "<p>Camera Board IP Address:</p>";
+          successHtml += "<div class='ip'>" + cameraIP + ":80</div>";
+          successHtml += "<div class='info'>📡 Camera will automatically connect to Main Board via <strong>bantaybot-main.local:81</strong></div>";
+          successHtml += "<p style='margin-top:25px;color:#666;'>⚡ Board will restart in 30 seconds...</p>";
+          successHtml += "<p style='color:#666;font-size:14px;'>💡 Access via hostname:<br><strong>bantaybot-camera.local</strong></p></div></body></html>";
           req->send(200, "text/html", successHtml);
         });
 
         // Redirect to success
         request->redirect("/success");
 
-        delay(35000);
+        delay(30000);
         ESP.restart();
       } else {
         Serial.println("\n❌ WiFi connection failed");
