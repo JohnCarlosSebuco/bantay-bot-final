@@ -28,6 +28,16 @@ String mainBoardIP = "";
 int mainBoardPort = 81;
 bool wifiConfigured = false;
 
+// Connection health monitoring
+String cachedMainBoardIP = "";           // Cached resolved IP
+unsigned long lastConnectionTest = 0;
+unsigned long lastSuccessfulTrigger = 0;
+unsigned long lastFailedTrigger = 0;
+int failedTriggerCount = 0;
+int successfulTriggerCount = 0;
+bool mainBoardReachable = false;
+const unsigned long CONNECTION_TEST_INTERVAL = 30000;  // Test connection every 30s
+
 // WiFi Manager AP settings
 const char* apSSID = "BantayBot-Camera-Setup";
 const char* apPassword = "bantaybot123";  // Default password for setup AP
@@ -226,10 +236,109 @@ void setup() {
 }
 
 // ===========================
+// WiFi Auto-Reconnect
+// ===========================
+void checkWiFiConnection() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("⚠️ WiFi disconnected! Attempting to reconnect...");
+
+    WiFi.disconnect();
+    WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+    WiFi.setSleep(false);
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\n✅ WiFi reconnected!");
+      Serial.print("📍 IP Address: ");
+      Serial.println(WiFi.localIP());
+
+      // Clear cached IP to force re-resolution
+      cachedMainBoardIP = "";
+    } else {
+      Serial.println("\n❌ WiFi reconnection failed");
+    }
+  }
+}
+
+// ===========================
+// Connection Health Check
+// ===========================
+void testMainBoardConnection() {
+  if (mainBoardIP.length() == 0) return;
+
+  HTTPClient http;
+  bool reachable = false;
+
+  Serial.println("🔍 Testing Main Board connection...");
+
+  // Try cached IP first
+  if (cachedMainBoardIP.length() > 0) {
+    String url = "http://" + cachedMainBoardIP + ":" + String(mainBoardPort) + "/ping";
+    http.begin(url);
+    http.setTimeout(1000);
+
+    int httpCode = http.GET();
+    http.end();
+
+    if (httpCode == 200) {
+      reachable = true;
+      Serial.println("✅ Main Board reachable via cached IP");
+    }
+  }
+
+  // If cached failed, try resolving
+  if (!reachable) {
+    IPAddress mainIP;
+    if (MDNS.queryHost("bantaybot-main", mainIP)) {
+      cachedMainBoardIP = mainIP.toString();
+      Serial.printf("📌 Resolved and cached Main Board IP: %s\n", cachedMainBoardIP.c_str());
+
+      String url = "http://" + cachedMainBoardIP + ":" + String(mainBoardPort) + "/ping";
+      http.begin(url);
+      http.setTimeout(1000);
+
+      int httpCode = http.GET();
+      http.end();
+
+      if (httpCode == 200) {
+        reachable = true;
+        Serial.println("✅ Main Board reachable via resolved IP");
+      }
+    } else {
+      Serial.println("⚠️ Failed to resolve Main Board via mDNS");
+    }
+  }
+
+  mainBoardReachable = reachable;
+
+  if (!reachable) {
+    Serial.println("❌ Main Board not reachable");
+    cachedMainBoardIP = "";  // Clear cache
+  }
+}
+
+// ===========================
 // Main Loop
 // ===========================
 void loop() {
+  unsigned long now = millis();
+
+  // WiFi reconnection check (every loop, but only acts if disconnected)
+  checkWiFiConnection();
+
   ws.cleanupClients();
+
+  // Periodic connection health check
+  if (now - lastConnectionTest >= CONNECTION_TEST_INTERVAL) {
+    lastConnectionTest = now;
+    testMainBoardConnection();
+  }
 
   // Perform bird detection if enabled
   if (birdDetectionEnabled) {
@@ -455,58 +564,131 @@ void performBirdDetection() {
 }
 
 // ===========================
-// Trigger Main Board Alarm
+// Trigger Main Board Alarm (with retry and caching)
 // ===========================
 void triggerMainBoardAlarm() {
   if (mainBoardIP.length() == 0) {
     Serial.println("⚠️ Main board IP not configured, skipping alarm trigger");
+    failedTriggerCount++;
+    lastFailedTrigger = millis();
     return;
   }
 
   HTTPClient http;
   bool success = false;
+  const int MAX_RETRIES = 3;
+  const int RETRY_DELAY_MS = 500;
 
-  // Strategy 1: Try mDNS hostname first
-  if (mainBoardIP.indexOf(".local") > 0) {
-    String url = "http://" + mainBoardIP + ":" + String(mainBoardPort) + "/trigger-alarm";
-    http.begin(url);
-    http.setTimeout(3000);  // 3 second timeout for mDNS
+  // Try up to 3 times with retry logic
+  for (int attempt = 1; attempt <= MAX_RETRIES && !success; attempt++) {
+    Serial.printf("🔄 Trigger attempt %d/%d...\n", attempt, MAX_RETRIES);
 
-    int httpCode = http.GET();
-    http.end();
-
-    if (httpCode > 0) {
-      Serial.printf("✅ Main board triggered via mDNS! Response: %d\n", httpCode);
-      success = true;
-    } else {
-      Serial.printf("⚠️ mDNS failed (%s), trying IP resolution...\n", http.errorToString(httpCode).c_str());
-    }
-  }
-
-  // Strategy 2: If mDNS failed, try resolving to IP
-  if (!success) {
-    IPAddress mainIP;
-    if (MDNS.queryHost("bantaybot-main", mainIP)) {
-      String url = "http://" + mainIP.toString() + ":" + String(mainBoardPort) + "/trigger-alarm";
+    // Strategy 1: Try cached IP first (fastest)
+    if (cachedMainBoardIP.length() > 0) {
+      String url = "http://" + cachedMainBoardIP + ":" + String(mainBoardPort) + "/trigger-alarm";
       http.begin(url);
-      http.setTimeout(3000);
+      http.setTimeout(1000);  // 1 second timeout per attempt
 
       int httpCode = http.GET();
       http.end();
 
-      if (httpCode > 0) {
-        Serial.printf("✅ Main board triggered via resolved IP! Response: %d\n", httpCode);
+      if (httpCode > 0 && httpCode == 200) {
+        Serial.printf("✅ Triggered via cached IP! (attempt %d)\n", attempt);
         success = true;
+        successfulTriggerCount++;
+        lastSuccessfulTrigger = millis();
+        mainBoardReachable = true;
+        break;
       } else {
-        Serial.printf("❌ Failed to trigger via resolved IP: %s\n", http.errorToString(httpCode).c_str());
+        Serial.printf("⚠️ Cached IP failed on attempt %d: %s\n", attempt, http.errorToString(httpCode).c_str());
+        // Clear cache on failure
+        if (attempt == MAX_RETRIES) {
+          cachedMainBoardIP = "";
+        }
       }
-    } else {
-      Serial.println("❌ Failed to resolve bantaybot-main via mDNS");
+    }
+
+    // Strategy 2: Try mDNS hostname
+    if (!success && mainBoardIP.indexOf(".local") > 0) {
+      String url = "http://" + mainBoardIP + ":" + String(mainBoardPort) + "/trigger-alarm";
+      http.begin(url);
+      http.setTimeout(1000);
+
+      int httpCode = http.GET();
+      http.end();
+
+      if (httpCode > 0 && httpCode == 200) {
+        Serial.printf("✅ Triggered via mDNS! (attempt %d)\n", attempt);
+        success = true;
+        successfulTriggerCount++;
+        lastSuccessfulTrigger = millis();
+        mainBoardReachable = true;
+        break;
+      } else {
+        Serial.printf("⚠️ mDNS failed on attempt %d\n", attempt);
+      }
+    }
+
+    // Strategy 3: Try resolving mDNS to IP
+    if (!success) {
+      IPAddress mainIP;
+      if (MDNS.queryHost("bantaybot-main", mainIP)) {
+        String resolvedIP = mainIP.toString();
+        String url = "http://" + resolvedIP + ":" + String(mainBoardPort) + "/trigger-alarm";
+        http.begin(url);
+        http.setTimeout(1000);
+
+        int httpCode = http.GET();
+        http.end();
+
+        if (httpCode > 0 && httpCode == 200) {
+          Serial.printf("✅ Triggered via resolved IP! (attempt %d)\n", attempt);
+          // Cache the resolved IP for faster future calls
+          cachedMainBoardIP = resolvedIP;
+          Serial.printf("📌 Cached Main Board IP: %s\n", cachedMainBoardIP.c_str());
+          success = true;
+          successfulTriggerCount++;
+          lastSuccessfulTrigger = millis();
+          mainBoardReachable = true;
+          break;
+        } else {
+          Serial.printf("⚠️ Resolved IP failed on attempt %d\n", attempt);
+        }
+      } else {
+        Serial.printf("⚠️ mDNS resolution failed on attempt %d\n", attempt);
+      }
+    }
+
+    // Wait before retry (exponential backoff)
+    if (!success && attempt < MAX_RETRIES) {
+      int delayTime = RETRY_DELAY_MS * attempt;  // 500ms, 1000ms, 1500ms
+      Serial.printf("⏳ Retrying in %dms...\n", delayTime);
+      delay(delayTime);
     }
   }
 
   if (!success) {
-    Serial.println("❌ All connection strategies failed");
+    Serial.println("❌ All trigger attempts failed after retries");
+    failedTriggerCount++;
+    lastFailedTrigger = millis();
+    mainBoardReachable = false;
+
+    // Flash LED to indicate failure
+    #if defined(LED_GPIO_NUM)
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(LED_GPIO_NUM, HIGH);
+      delay(100);
+      digitalWrite(LED_GPIO_NUM, LOW);
+      delay(100);
+    }
+    #endif
+  } else {
+    // Flash LED to indicate success
+    #if defined(LED_GPIO_NUM)
+    digitalWrite(LED_GPIO_NUM, HIGH);
+    delay(200);
+    digitalWrite(LED_GPIO_NUM, LOW);
+    #endif
   }
 }
 
@@ -699,6 +881,32 @@ void startCameraServer() {
     json += "\"birdDetectionEnabled\":" + String(birdDetectionEnabled ? "true" : "false") + ",";
     json += "\"birdsDetectedToday\":" + String(birdsDetectedToday) + ",";
     json += "\"uptime\":" + String(millis() / 1000) + ",";
+    json += "\"freeHeap\":" + String(ESP.getFreeHeap());
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Diagnostics endpoint
+  server.on("/diagnostics", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"device\":\"BantayBot Camera\",";
+    json += "\"uptime\":" + String(millis() / 1000) + ",";
+    json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
+    json += "\"wifiSSID\":\"" + WiFi.SSID() + "\",";
+    json += "\"wifiRSSI\":" + String(WiFi.RSSI()) + ",";
+    json += "\"ipAddress\":\"" + WiFi.localIP().toString() + "\",";
+    json += "\"mainBoardIP\":\"" + mainBoardIP + "\",";
+    json += "\"cachedMainBoardIP\":\"" + cachedMainBoardIP + "\",";
+    json += "\"mainBoardReachable\":" + String(mainBoardReachable ? "true" : "false") + ",";
+    json += "\"lastConnectionTest\":" + String(lastConnectionTest / 1000) + ",";
+    json += "\"lastSuccessfulTrigger\":" + String(lastSuccessfulTrigger / 1000) + ",";
+    json += "\"lastFailedTrigger\":" + String(lastFailedTrigger / 1000) + ",";
+    json += "\"successfulTriggers\":" + String(successfulTriggerCount) + ",";
+    json += "\"failedTriggers\":" + String(failedTriggerCount) + ",";
+    json += "\"successRate\":" + String(successfulTriggerCount + failedTriggerCount > 0 ?
+      (float)successfulTriggerCount / (successfulTriggerCount + failedTriggerCount) * 100.0 : 0.0) + ",";
+    json += "\"birdDetectionEnabled\":" + String(birdDetectionEnabled ? "true" : "false") + ",";
+    json += "\"birdsDetectedToday\":" + String(birdsDetectedToday) + ",";
     json += "\"freeHeap\":" + String(ESP.getFreeHeap());
     json += "}";
     request->send(200, "application/json", json);

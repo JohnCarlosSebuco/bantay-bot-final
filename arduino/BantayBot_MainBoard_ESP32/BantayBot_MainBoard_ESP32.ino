@@ -82,6 +82,12 @@ const unsigned long soilInterval = 2000;
 int servoCycles = 0;
 bool servoActive = false;
 
+// ==== Alarm Queue System ====
+bool alarmInProgress = false;
+unsigned long alarmStartTime = 0;
+int pendingAlarms = 0;
+const int MAX_PENDING_ALARMS = 3;
+
 // ===========================
 // Setup
 // ===========================
@@ -177,10 +183,44 @@ void loop() {
   server.handleClient();  // Handle HTTP requests
   unsigned long now = millis();
 
+  // ---- Alarm Queue Processing ----
+  if (alarmInProgress) {
+    // Check if alarm should end (after 120 seconds or when servos are done)
+    if ((now - alarmStartTime >= 120000UL) || (!servoActive && now - alarmStartTime >= 5000UL)) {
+      player.stop();
+      alarmInProgress = false;
+      Serial.println("✅ Alarm completed");
+
+      // Process next alarm from queue if any
+      if (pendingAlarms > 0) {
+        pendingAlarms--;
+        Serial.printf("🔄 Processing next alarm from queue (%d remaining)\n", pendingAlarms);
+
+        // Restart alarm
+        alarmInProgress = true;
+        alarmStartTime = now;
+        servoActive = true;
+        servoCycles = 0;
+        servoAngle = 0;
+
+        // Play next track
+        currentTrack++;
+        if (currentTrack == 3) currentTrack++;
+        if (currentTrack > totalTracks) currentTrack = 1;
+        if (currentTrack == 3) currentTrack++;
+
+        player.play(currentTrack);
+        Serial.println("🚨 Queued alarm triggered! Playing track " + String(currentTrack));
+      }
+    }
+  }
+
   // ---- PIR Detection ----
-  if (!inCooldown && digitalRead(PIR_PIN) == HIGH && !motionDetected) {
+  if (!inCooldown && digitalRead(PIR_PIN) == HIGH && !motionDetected && !alarmInProgress) {
     motionDetected = true;
     motionStart = now;
+    alarmInProgress = true;
+    alarmStartTime = now;
     servoActive = true;
     servoCycles = 0;
 
@@ -195,16 +235,17 @@ void loop() {
     Serial.println(currentTrack);
   }
 
-  // ---- Motion Active: Stop Motor while playing ----
-  if (motionDetected) {
+  // ---- Motion Active: Update Servos ----
+  if (motionDetected || alarmInProgress) {
     updateServos();
 
-    if (now - motionStart >= 120000UL) {  // 2 minutes
+    if (motionDetected && now - motionStart >= 120000UL) {  // 2 minutes
       player.stop();
       motionDetected = false;
+      alarmInProgress = false;
       inCooldown = true;
       cooldownStart = now;
-      Serial.println("⏸️ Stopped after 2 minutes, entering cooldown");
+      Serial.println("⏸️ PIR stopped after 2 minutes, entering cooldown");
     }
   } else {
     // ---- Motor Normal Run ----
@@ -484,21 +525,42 @@ void setupHTTPServer() {
 
   // TRIGGER ALARM (called by camera when bird detected)
   server.on("/trigger-alarm", HTTP_GET, []() {
-    // Activate servo oscillation
-    servoActive = true;
-    servoCycles = 0;
-    servoAngle = 0;
+    if (alarmInProgress) {
+      // Alarm already in progress, queue it
+      if (pendingAlarms < MAX_PENDING_ALARMS) {
+        pendingAlarms++;
+        Serial.printf("⏸️ Alarm in progress, queued (%d pending)\n", pendingAlarms);
+        server.send(200, "text/plain", "Alarm queued");
+      } else {
+        Serial.println("⚠️ Alarm queue full, ignoring trigger");
+        server.send(503, "text/plain", "Alarm queue full");
+      }
+    } else {
+      // Start alarm immediately
+      alarmInProgress = true;
+      alarmStartTime = millis();
 
-    // Play next track (skip track 3)
-    currentTrack++;
-    if (currentTrack == 3) currentTrack++;
-    if (currentTrack > totalTracks) currentTrack = 1;
-    if (currentTrack == 3) currentTrack++;
+      // Activate servo oscillation
+      servoActive = true;
+      servoCycles = 0;
+      servoAngle = 0;
 
-    player.play(currentTrack);
+      // Play next track (skip track 3)
+      currentTrack++;
+      if (currentTrack == 3) currentTrack++;
+      if (currentTrack > totalTracks) currentTrack = 1;
+      if (currentTrack == 3) currentTrack++;
 
-    Serial.println("🚨 ALARM TRIGGERED BY CAMERA! Playing track " + String(currentTrack));
-    server.send(200, "text/plain", "Alarm triggered! Track " + String(currentTrack));
+      player.play(currentTrack);
+
+      Serial.println("🚨 ALARM TRIGGERED BY CAMERA! Playing track " + String(currentTrack));
+      server.send(200, "text/plain", "Alarm triggered! Track " + String(currentTrack));
+    }
+  });
+
+  // Ping endpoint for connection health checks
+  server.on("/ping", HTTP_GET, []() {
+    server.send(200, "text/plain", "pong");
   });
 
   // Info endpoint - shows current status (no Serial Monitor needed!)
@@ -512,6 +574,27 @@ void setupHTTPServer() {
     json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
     json += "\"connected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
     json += "\"uptime\":" + String(millis() / 1000) + ",";
+    json += "\"freeHeap\":" + String(ESP.getFreeHeap());
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+
+  // Diagnostics endpoint
+  server.on("/diagnostics", HTTP_GET, []() {
+    String json = "{";
+    json += "\"device\":\"BantayBot Main Board\",";
+    json += "\"uptime\":" + String(millis() / 1000) + ",";
+    json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
+    json += "\"wifiSSID\":\"" + WiFi.SSID() + "\",";
+    json += "\"wifiRSSI\":" + String(WiFi.RSSI()) + ",";
+    json += "\"ipAddress\":\"" + WiFi.localIP().toString() + "\",";
+    json += "\"alarmInProgress\":" + String(alarmInProgress ? "true" : "false") + ",";
+    json += "\"pendingAlarms\":" + String(pendingAlarms) + ",";
+    json += "\"currentTrack\":" + String(currentTrack) + ",";
+    json += "\"volume\":" + String(volumeLevel) + ",";
+    json += "\"motionDetected\":" + String(motionDetected ? "true" : "false") + ",";
+    json += "\"servoActive\":" + String(servoActive ? "true" : "false") + ",";
+    json += "\"inCooldown\":" + String(inCooldown ? "true" : "false") + ",";
     json += "\"freeHeap\":" + String(ESP.getFreeHeap());
     json += "}";
     server.send(200, "application/json", json);
