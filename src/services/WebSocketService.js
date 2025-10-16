@@ -1,79 +1,279 @@
 import { CONFIG } from '../config/config';
+import MainBoardService from './MainBoardService';
+import ConfigService from './ConfigService';
 
 class WebSocketService {
   constructor() {
-    this.ws = null;
+    // Main board uses HTTP polling (MainBoardService)
+    // Camera board uses WebSocket
+    this.cameraWs = null;     // Camera board (detection, camera controls)
+
     this.listeners = {};
-    this.reconnectAttempts = 0;
-    this.isConnecting = false;
+    this.cameraReconnectAttempts = 0;
+    this.isCameraConnecting = false;
+
+    // Connection state
+    this.cameraConnected = false;
+
+    // Bind main board service events
+    MainBoardService.on('connected', (status) => {
+      this.emit('main_connected', status);
+      this.emit('connected', this.isFullyConnected());
+    });
+
+    MainBoardService.on('data', (data) => {
+      this.emit('main_data', data);
+      this.emit('data', data);  // Legacy compatibility
+    });
+
+    MainBoardService.on('error', (error) => {
+      this.emit('error', { source: 'main', error });
+    });
   }
 
-  connect(ip = CONFIG.ESP32_IP, path = CONFIG.WEBSOCKET_PATH) {
-    if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) {
+  /**
+   * Connect to both ESP32 boards
+   */
+  connectAll() {
+    this.connectMain();
+    this.connectCamera();
+  }
+
+  /**
+   * Connect to Main Control Board ESP32 (uses HTTP polling)
+   */
+  connectMain() {
+    MainBoardService.startPolling(2000);  // Poll every 2 seconds
+  }
+
+  /**
+   * Connect to Camera ESP32-CAM with fallback strategy
+   */
+  async connectCamera(ip = null, path = CONFIG.CAMERA_WEBSOCKET_PATH) {
+    if (this.isCameraConnecting || (this.cameraWs && this.cameraWs.readyState === WebSocket.OPEN)) {
       return;
     }
 
-    this.isConnecting = true;
-    const url = `ws://${ip}:${CONFIG.ESP32_PORT}${path}`;
-    
-    try {
-      this.ws = new WebSocket(url);
+    this.isCameraConnecting = true;
 
-      this.ws.onopen = () => {
-        console.log('WebSocket connected');
-        this.isConnecting = false;
-        this.reconnectAttempts = 0;
-        this.emit('connected', true);
-      };
+    // Get connection strategies (mDNS first, then IP)
+    const strategies = ConfigService.isInitialized
+      ? ConfigService.getCameraConnectionStrategy()
+      : [{type: 'ip', wsUrl: `ws://${CONFIG.CAMERA_ESP32_IP}:${CONFIG.CAMERA_ESP32_PORT}${path}`}];
 
-      this.ws.onmessage = (event) => {
+    // Try each strategy
+    for (const strategy of strategies) {
+      const url = strategy.wsUrl;
+      console.log(`Trying Camera Board (${strategy.type}):`, url);
+
+      const connected = await this.tryConnectCamera(url);
+      if (connected) {
+        console.log(`✅ Camera connected via ${strategy.type}`);
+        return;
+      } else {
+        console.log(`❌ Failed to connect via ${strategy.type}`);
+      }
+    }
+
+    // All strategies failed
+    console.error('❌ All Camera Board connection strategies failed');
+    this.isCameraConnecting = false;
+    this.attemptReconnectCamera();
+  }
+
+  /**
+   * Try to connect to camera with a specific URL
+   */
+  async tryConnectCamera(url) {
+    return new Promise((resolve) => {
+      let resolved = false;
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          if (this.cameraWs) {
+            this.cameraWs.close();
+          }
+          resolve(false);
+        }
+      }, 5000); // 5 second timeout per attempt
+
+      try {
+        this.cameraWs = new WebSocket(url);
+
+        this.cameraWs.onopen = () => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            console.log('✅ Camera Board WebSocket connected');
+            this.isCameraConnecting = false;
+            this.cameraReconnectAttempts = 0;
+            this.cameraConnected = true;
+            this.emit('camera_connected', true);
+            this.emit('connected', this.isFullyConnected());
+            resolve(true);
+          }
+        };
+
+        this.cameraWs.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data && data.type === 'alert') {
+          this.emit('camera_data', data);
+
+          // Handle specific message types
+          if (data && data.type === 'bird_detection') {
             this.emit('alert', data);
-          } else {
-            this.emit('data', data);
+          } else if (data && data.type === 'camera_status') {
+            this.emit('camera_status', data);
           }
         } catch (error) {
-          console.error('Error parsing message:', error);
+          console.error('Error parsing camera board message:', error);
         }
       };
 
-      this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        this.isConnecting = false;
-        this.emit('error', error);
-      };
+        this.cameraWs.onerror = (error) => {
+          console.error('Camera Board WebSocket error:', error);
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            resolve(false);
+          }
+          this.isCameraConnecting = false;
+          this.cameraConnected = false;
+          this.emit('error', { source: 'camera', error });
+        };
 
-      this.ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        this.isConnecting = false;
-        this.emit('connected', false);
-        this.attemptReconnect();
-      };
-    } catch (error) {
-      console.error('Failed to connect:', error);
-      this.isConnecting = false;
-      this.attemptReconnect();
-    }
+        this.cameraWs.onclose = () => {
+          console.log('❌ Camera Board WebSocket disconnected');
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            resolve(false);
+          }
+          this.isCameraConnecting = false;
+          this.cameraConnected = false;
+          this.emit('camera_connected', false);
+          this.emit('connected', this.isFullyConnected());
+          this.attemptReconnectCamera();
+        };
+      } catch (error) {
+        console.error('Failed to connect to camera board:', error);
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timeout);
+          resolve(false);
+        }
+      }
+    });
   }
 
-  attemptReconnect() {
-    if (this.reconnectAttempts < 5) {
-      this.reconnectAttempts++;
+  /**
+   * Legacy connect method - connects to main board only
+   */
+  connect(ip = CONFIG.ESP32_IP, path = CONFIG.WEBSOCKET_PATH) {
+    // Use main board connection for backward compatibility
+    this.connectMain(ip, path);
+  }
+
+  /**
+   * Check if both connections are established
+   */
+  isFullyConnected() {
+    return MainBoardService.getConnectionStatus() && this.cameraConnected;
+  }
+
+  /**
+   * Get connection status
+   */
+  getConnectionStatus() {
+    return {
+      main: MainBoardService.getConnectionStatus(),
+      camera: this.cameraConnected,
+      fullyConnected: this.isFullyConnected(),
+    };
+  }
+
+  attemptReconnectCamera() {
+    if (this.cameraReconnectAttempts < 5) {
+      this.cameraReconnectAttempts++;
       setTimeout(() => {
-        console.log(`Reconnection attempt ${this.reconnectAttempts}`);
-        this.connect();
+        console.log(`🔄 Camera Board reconnection attempt ${this.cameraReconnectAttempts}`);
+        this.connectCamera();
       }, CONFIG.RECONNECT_INTERVAL);
     }
   }
 
-  send(message) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
+  /**
+   * Send command to main board (uses HTTP)
+   */
+  async sendToMain(message) {
+    // Map WebSocket-style commands to HTTP endpoints
+    const command = message.command;
+    const value = message.value;
+
+    switch (command) {
+      case 'SOUND_ALARM':
+        return await MainBoardService.triggerAlarm();
+      case 'PLAY_TRACK':
+        return await MainBoardService.playTrack(value);
+      case 'NEXT_TRACK':
+        return await MainBoardService.nextTrack();
+      case 'SET_VOLUME':
+        return await MainBoardService.setVolume(value);
+      case 'MOVE_ARMS':
+        return await MainBoardService.moveArms();
+      case 'STOP_MOVEMENT':
+      case 'STOP_AUDIO':
+        return await MainBoardService.stop();
+
+      // Camera-specific commands - ignore for main board
+      case 'SET_SENSITIVITY':
+      case 'SET_BRIGHTNESS':
+      case 'SET_CONTRAST':
+      case 'TOGGLE_GRAYSCALE':
+      case 'TOGGLE_DETECTION':
+      case 'RESET_BIRD_COUNT':
+        // These are camera commands, silently ignore
+        return { success: true, message: 'Camera command - ignored by main board' };
+
+      // Unsupported commands - log but don't error
+      case 'ROTATE_HEAD':
+      case 'ROTATE_HEAD_LEFT':
+      case 'ROTATE_HEAD_RIGHT':
+      case 'ROTATE_HEAD_CENTER':
+      case 'TEST_BUZZER':
+      case 'CALIBRATE_SENSORS':
+      case 'RESET_SYSTEM':
+        console.log(`ℹ️ Command "${command}" not implemented in current firmware`);
+        return { success: false, error: 'Not implemented in firmware' };
+
+      default:
+        console.warn('Unknown main board command:', command);
+        return { success: false, error: 'Unknown command' };
     }
   }
 
+  /**
+   * Send command to camera board
+   */
+  sendToCamera(message) {
+    if (this.cameraWs && this.cameraWs.readyState === WebSocket.OPEN) {
+      this.cameraWs.send(JSON.stringify(message));
+      return true;
+    }
+    console.warn('Camera board not connected, cannot send message');
+    return false;
+  }
+
+  /**
+   * Legacy send method - sends to main board
+   */
+  send(message) {
+    return this.sendToMain(message);
+  }
+
+  /**
+   * Event listener management
+   */
   on(event, callback) {
     if (!this.listeners[event]) {
       this.listeners[event] = [];
@@ -93,10 +293,15 @@ class WebSocketService {
     }
   }
 
+  /**
+   * Disconnect from all boards
+   */
   disconnect() {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+    MainBoardService.disconnect();
+    if (this.cameraWs) {
+      this.cameraWs.close();
+      this.cameraWs = null;
+      this.cameraConnected = false;
     }
   }
 }

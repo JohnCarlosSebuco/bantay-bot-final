@@ -17,6 +17,7 @@ import BirdAnalyticsScreen from './src/screens/BirdAnalyticsScreen';
 import ReportsScreen from './src/screens/ReportsScreen';
 import { LocaleContext, loadLang } from './src/i18n/i18n';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
+import ConfigService from './src/services/ConfigService';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -42,7 +43,14 @@ function AppContent() {
   const { theme, isDark } = useTheme();
 
   React.useEffect(() => {
-    (async () => setLang(await loadLang()))();
+    (async () => {
+      // Initialize ConfigService first
+      await ConfigService.initialize();
+      console.log('✅ ConfigService initialized on app startup');
+
+      // Load language
+      setLang(await loadLang());
+    })();
   }, []);
 
   return (
