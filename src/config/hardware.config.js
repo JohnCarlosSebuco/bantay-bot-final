@@ -1,0 +1,309 @@
+/**
+ * BantayBot Hardware Configuration for React Native
+ *
+ * This file contains all hardware specifications, pin mappings,
+ * sensor thresholds, Firebase collections, and constants used by both
+ * Arduino firmware and the React Native application.
+ *
+ * Combined configuration from existing React Native app and PWA Firebase implementation.
+ */
+
+// ===========================
+// Device Configuration
+// ===========================
+export const DEVICE_CONFIG = {
+  CAMERA_DEVICE_ID: 'camera_001',
+  MAIN_DEVICE_ID: 'main_001',
+
+  // mDNS hostnames (for local network discovery)
+  CAMERA_MDNS: 'bantaybot-camera.local',
+  MAIN_MDNS: 'bantaybot-main.local',
+
+  // WiFi AP mode settings
+  CAMERA_AP_SSID: 'BantayBot-Camera-Setup',
+  MAIN_AP_SSID: 'BantayBot-Main-Setup',
+  AP_PASSWORD: 'bantaybot123',
+
+  // Update intervals
+  SENSOR_UPDATE_INTERVAL: 2000,  // 2 seconds
+  COMMAND_POLL_INTERVAL: 500,    // 500ms
+  CONNECTION_TEST_INTERVAL: 30000,  // 30 seconds
+};
+
+// ===========================
+// Firebase Collections
+// ===========================
+export const FIREBASE_COLLECTIONS = {
+  DEVICES: 'devices',
+  SENSOR_DATA: 'sensor_data',
+  COMMANDS: 'commands',
+  DETECTION_HISTORY: 'detection_history',
+  HARVEST_DATA: 'harvest_data',
+  RAINFALL_LOG: 'rainfall_log',
+  SETTINGS: 'settings',
+};
+
+// ===========================
+// Command Types for Firebase
+// ===========================
+export const COMMAND_TYPES = {
+  // Audio commands
+  PLAY_AUDIO: 'play_audio',
+  STOP_AUDIO: 'stop_audio',
+  NEXT_TRACK: 'next_track',
+  PREV_TRACK: 'prev_track',
+  SET_VOLUME: 'set_volume',
+  SET_TRACK: 'set_track',
+
+  // Motor commands
+  ROTATE_HEAD: 'rotate_head',
+  ROTATE_LEFT: 'rotate_left',
+  ROTATE_RIGHT: 'rotate_right',
+  ROTATE_CENTER: 'rotate_center',
+
+  // Servo commands
+  MOVE_SERVO: 'move_servo',
+  OSCILLATE_ARMS: 'oscillate_arms',
+  STOP_OSCILLATE: 'stop_oscillate',
+  ARMS_REST: 'arms_rest',
+  ARMS_ALERT: 'arms_alert',
+  ARMS_WAVE: 'arms_wave',
+
+  // Camera commands
+  SET_BRIGHTNESS: 'set_brightness',
+  SET_CONTRAST: 'set_contrast',
+  SET_RESOLUTION: 'set_resolution',
+  TOGGLE_GRAYSCALE: 'toggle_grayscale',
+
+  // Detection commands
+  ENABLE_DETECTION: 'enable_detection',
+  DISABLE_DETECTION: 'disable_detection',
+  SET_SENSITIVITY: 'set_sensitivity',
+
+  // System commands
+  RESTART: 'restart',
+  TRIGGER_ALARM: 'trigger_alarm',
+};
+
+// ===========================
+// Sensor Thresholds
+// ===========================
+export const SENSOR_THRESHOLDS = {
+  // Motion & Distance
+  MOTION_ALERT_DISTANCE: 20,
+
+  // Soil Humidity (%)
+  SOIL_HUMIDITY_LOW: 40,      // Below 40% = Dry
+  SOIL_HUMIDITY_OPTIMAL: 70,  // 40-70% = Optimal
+  // Above 70% = Wet
+
+  // Soil Temperature (°C)
+  SOIL_TEMP_LOW: 20,          // Below 20°C = Cold
+  SOIL_TEMP_OPTIMAL: 30,      // 20-30°C = Good
+  // Above 30°C = Hot
+
+  // Soil Conductivity (µS/cm)
+  SOIL_CONDUCTIVITY_LOW: 200,     // Below 200 = Low nutrients
+  SOIL_CONDUCTIVITY_OPTIMAL: 2000, // 200-2000 = Optimal
+  // Above 2000 = High nutrients (oversaturated)
+
+  // Soil pH (pH scale)
+  SOIL_PH_LOW: 5.5,           // Below 5.5 = Too acidic
+  SOIL_PH_OPTIMAL: 7.5,       // 5.5-7.5 = Balanced
+  // Above 7.5 = Too alkaline
+
+  // Air Temperature (DHT22 backup if available - °C)
+  AIR_TEMP_HIGH: 35,
+  AIR_TEMP_LOW: 10,
+
+  // Air Humidity (DHT22 backup - %)
+  AIR_HUMIDITY_HIGH: 80,
+  AIR_HUMIDITY_LOW: 30,
+
+  // Audio
+  AUDIO_VOLUME_MIN: 0,
+  AUDIO_VOLUME_MAX: 30,
+  AUDIO_VOLUME_DEFAULT: 20,
+
+  // Servo Arms
+  SERVO_ANGLE_MIN: 0,
+  SERVO_ANGLE_MAX: 180,
+  SERVO_ANGLE_DEFAULT: 90,
+
+  // Bird Detection
+  DETECTION_COOLDOWN: 10000,  // 10 seconds between detections
+};
+
+// ===========================
+// Audio Configuration
+// ===========================
+export const AUDIO_CONFIG = {
+  TOTAL_TRACKS: 7,
+  SKIP_TRACK: 3,  // Track 3 is not used
+  MIN_VOLUME: 0,
+  MAX_VOLUME: 30,
+  DEFAULT_VOLUME: 20,
+};
+
+// ===========================
+// Stepper Motor Configuration
+// ===========================
+export const STEPPER_CONFIG = {
+  MIN_ANGLE: -180,
+  MAX_ANGLE: 180,
+  DEFAULT_STEP: 45,
+  STEPS_PER_LOOP: 20,
+  STEP_DELAY_US: 800,
+  MAX_SPEED: 1000,  // Steps per second
+  ACCELERATION: 500,
+};
+
+// ===========================
+// Servo Configuration (Arms)
+// ===========================
+export const SERVO_CONFIG = {
+  MIN_ANGLE: 0,
+  MAX_ANGLE: 180,
+  DEFAULT_ANGLE: 90,
+  OSCILLATION_CYCLES: 6,
+  OSCILLATION_INTERVAL: 30,  // milliseconds
+  PWM_MIN: 120,  // PCA9685 pulse length
+  PWM_MAX: 600,  // PCA9685 pulse length
+};
+
+// ===========================
+// PIR Motion Sensor Configuration
+// ===========================
+export const PIR_CONFIG = {
+  MOTION_TIMEOUT: 120000,  // 2 minutes
+  MOTION_COOLDOWN: 30000,  // 30 seconds
+};
+
+// ===========================
+// Bird Detection Configuration
+// ===========================
+export const DETECTION_CONFIG = {
+  ENABLED_BY_DEFAULT: true,
+  DEFAULT_SENSITIVITY: 2,  // 1=Low, 2=Medium, 3=High
+  DEFAULT_THRESHOLD: 25,
+  MIN_BIRD_SIZE: 1000,    // pixels
+  MAX_BIRD_SIZE: 30000,   // pixels
+  COOLDOWN: 10000,        // 10 seconds between detections
+  DETECTION_ZONE_TOP: 0,
+  DETECTION_ZONE_BOTTOM: 240,
+  DETECTION_ZONE_LEFT: 0,
+  DETECTION_ZONE_RIGHT: 320,
+};
+
+// ===========================
+// Crop Database
+// ===========================
+export const CROP_DATABASE = {
+  tomato: {
+    name: 'Tomato',
+    nameTl: 'Kamatis',
+    icon: '🍅',
+    baseTemp: 10,
+    requiredGDD: 2200,
+    optimalTempMin: 18,
+    optimalTempMax: 28,
+    optimalMoistureMin: 40,
+    optimalMoistureMax: 70,
+    optimalPHMin: 6.0,
+    optimalPHMax: 7.0,
+    growthDays: 70,
+    waterNeedLow: 25,
+    waterNeedHigh: 50,
+  },
+  rice: {
+    name: 'Rice',
+    nameTl: 'Palay',
+    icon: '🌾',
+    baseTemp: 10,
+    requiredGDD: 3000,
+    optimalTempMin: 20,
+    optimalTempMax: 35,
+    optimalMoistureMin: 60,
+    optimalMoistureMax: 90,
+    optimalPHMin: 5.5,
+    optimalPHMax: 6.5,
+    growthDays: 120,
+    waterNeedLow: 100,
+    waterNeedHigh: 150,
+  },
+  corn: {
+    name: 'Corn',
+    nameTl: 'Mais',
+    icon: '🌽',
+    baseTemp: 10,
+    requiredGDD: 2700,
+    optimalTempMin: 18,
+    optimalTempMax: 32,
+    optimalMoistureMin: 50,
+    optimalMoistureMax: 80,
+    optimalPHMin: 5.5,
+    optimalPHMax: 7.5,
+    growthDays: 90,
+    waterNeedLow: 40,
+    waterNeedHigh: 60,
+  },
+  eggplant: {
+    name: 'Eggplant',
+    nameTl: 'Talong',
+    icon: '🍆',
+    baseTemp: 15,
+    requiredGDD: 1800,
+    optimalTempMin: 21,
+    optimalTempMax: 30,
+    optimalMoistureMin: 45,
+    optimalMoistureMax: 75,
+    optimalPHMin: 5.5,
+    optimalPHMax: 6.5,
+    growthDays: 80,
+    waterNeedLow: 30,
+    waterNeedHigh: 45,
+  },
+  default: {
+    name: 'General Crop',
+    nameTl: 'Pangkalahatang Pananim',
+    icon: '🌱',
+    baseTemp: 10,
+    requiredGDD: 2000,
+    optimalTempMin: 15,
+    optimalTempMax: 30,
+    optimalMoistureMin: 40,
+    optimalMoistureMax: 70,
+    optimalPHMin: 5.5,
+    optimalPHMax: 7.5,
+    growthDays: 90,
+    waterNeedLow: 30,
+    waterNeedHigh: 50,
+  }
+};
+
+// ===========================
+// App Configuration
+// ===========================
+export const APP_CONFIG = {
+  DEFAULT_LANGUAGE: 'tl',  // Tagalog
+  DEFAULT_THEME: 'light',
+  MAX_DETECTION_HISTORY: 100,
+  MAX_ENVIRONMENTAL_HISTORY_DAYS: 90,
+  MAX_RAINFALL_LOG_DAYS: 90,
+  REFRESH_INTERVAL: 1000,  // 1 second for real-time updates
+};
+
+// Default export with all configurations
+export default {
+  DEVICE_CONFIG,
+  FIREBASE_COLLECTIONS,
+  COMMAND_TYPES,
+  SENSOR_THRESHOLDS,
+  AUDIO_CONFIG,
+  STEPPER_CONFIG,
+  SERVO_CONFIG,
+  PIR_CONFIG,
+  DETECTION_CONFIG,
+  CROP_DATABASE,
+  APP_CONFIG,
+};

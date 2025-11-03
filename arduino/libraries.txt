@@ -1,0 +1,165 @@
+# Required Arduino Libraries for Firebase Integration
+
+## Core Libraries (Install via Arduino Library Manager)
+
+1. **Firebase ESP Client** by Mobitz
+   - Version: 4.4.14 or higher
+   - Used for: Firestore database operations, authentication
+   - Installation: Arduino IDE > Tools > Manage Libraries > Search "Firebase ESP Client"
+
+2. **ArduinoJson** by Benoit Blanchon
+   - Version: 6.21.3 or higher
+   - Used for: JSON parsing and creation
+   - Installation: Arduino IDE > Tools > Manage Libraries > Search "ArduinoJson"
+
+3. **ESPAsyncWebServer** by lacamera
+   - Version: 1.2.3 or higher
+   - Used for: HTTP server and WebSocket fallback
+   - Installation: Download from GitHub and install manually
+
+4. **AsyncTCP** by dvarrel
+   - Version: 1.1.1 or higher
+   - Dependency for: ESPAsyncWebServer
+   - Installation: Download from GitHub and install manually
+
+## Hardware-Specific Libraries
+
+5. **ESP32 Camera** (Built-in)
+   - Pre-installed with ESP32 board package
+   - Used for: Camera operations and streaming
+
+6. **DFRobotDFPlayerMini** by DFRobot
+   - Version: 1.0.6 or higher
+   - Used for: MP3 audio playback
+   - Installation: Arduino IDE > Tools > Manage Libraries > Search "DFPlayer Mini"
+
+7. **AccelStepper** by Mike McCauley
+   - Version: 1.64 or higher
+   - Used for: Stepper motor control
+   - Installation: Arduino IDE > Tools > Manage Libraries > Search "AccelStepper"
+
+8. **Adafruit PWM Servo Driver Library** by Adafruit
+   - Version: 2.4.1 or higher
+   - Used for: PCA9685 servo control
+   - Installation: Arduino IDE > Tools > Manage Libraries > Search "Adafruit PWM Servo"
+
+9. **DHT sensor library** by Adafruit
+   - Version: 1.4.4 or higher
+   - Used for: DHT22 temperature/humidity sensor
+   - Installation: Arduino IDE > Tools > Manage Libraries > Search "DHT sensor library"
+
+10. **Adafruit Unified Sensor** by Adafruit
+    - Version: 1.1.9 or higher
+    - Dependency for: DHT sensor library
+    - Installation: Arduino IDE > Tools > Manage Libraries > Search "Adafruit Unified Sensor"
+
+## Manual Installation Libraries
+
+### ESPAsyncWebServer
+```
+1. Download: https://github.com/me-no-dev/ESPAsyncWebServer/archive/master.zip
+2. Extract to: Arduino/libraries/ESPAsyncWebServer
+3. Restart Arduino IDE
+```
+
+### AsyncTCP
+```
+1. Download: https://github.com/me-no-dev/AsyncTCP/archive/master.zip
+2. Extract to: Arduino/libraries/AsyncTCP
+3. Restart Arduino IDE
+```
+
+## Board Configuration
+
+### ESP32 Board Package
+1. Open Arduino IDE
+2. Go to File > Preferences
+3. Add this URL to "Additional Board Manager URLs":
+   ```
+   https://dl.espressif.com/dl/package_esp32_index.json
+   ```
+4. Go to Tools > Board > Boards Manager
+5. Search for "ESP32" and install "ESP32 by Espressif Systems"
+6. Select board: "AI Thinker ESP32-CAM" for camera module
+7. Select board: "ESP32 Dev Module" for main control board
+
+## Board Configuration Settings
+
+### For Main Board (BantayBotUnified_Firebase.ino)
+- Board: "ESP32 Dev Module"
+- Upload Speed: "921600"
+- CPU Frequency: "240MHz (WiFi/BT)"
+- Flash Frequency: "80MHz"
+- Flash Mode: "QIO"
+- Flash Size: "4MB (32Mb)"
+- Partition Scheme: "Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)"
+- Core Debug Level: "None"
+- PSRAM: "Disabled"
+
+### For Camera Board (CameraWebServerESP32cam_Firebase.ino)
+- Board: "AI Thinker ESP32-CAM"
+- Upload Speed: "921600"
+- CPU Frequency: "240MHz (WiFi/BT)"
+- Flash Frequency: "80MHz"
+- Flash Mode: "QIO"
+- Flash Size: "4MB (32Mb)"
+- Partition Scheme: "Huge APP (3MB No OTA/1MB SPIFFS)"
+- Core Debug Level: "None"
+- PSRAM: "Enabled"
+
+## Compilation Flags (Optional)
+
+Add these to your Arduino IDE preferences for better Firebase performance:
+
+```
+-DESP32
+-DFIREBASE_ESP_CLIENT
+-DFIREBASE_STORAGE_BUCKET_ID='"cloudbantaybot.firebasestorage.app"'
+```
+
+## Troubleshooting
+
+### Common Issues:
+
+1. **Compilation Error**: "Firebase.h not found"
+   - Solution: Install Firebase ESP Client library via Library Manager
+
+2. **Linking Error**: "undefined reference to Firebase"
+   - Solution: Ensure all Firebase dependencies are installed
+
+3. **Memory Issues**: "sketch too big"
+   - Solution: Use "Huge APP" partition scheme for ESP32-CAM
+
+4. **Upload Issues**: "Failed to connect"
+   - Solution: Press and hold BOOT button during upload for ESP32-CAM
+
+5. **WiFi Connection Issues**
+   - Solution: Update WiFi credentials in the code
+   - Check network compatibility (2.4GHz only for ESP32)
+
+## Testing Libraries
+
+After installation, compile this test sketch to verify libraries:
+
+```cpp
+#include <WiFi.h>
+#include <Firebase_ESP_Client.h>
+#include <ArduinoJson.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncTCP.h>
+#include <AccelStepper.h>
+#include <DHT.h>
+#include <Adafruit_PWMServoDriver.h>
+#include <DFRobotDFPlayerMini.h>
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("✅ All libraries compiled successfully!");
+}
+
+void loop() {
+  delay(1000);
+}
+```
+
+If this compiles without errors, all libraries are properly installed.

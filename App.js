@@ -18,6 +18,7 @@ import ReportsScreen from './src/screens/ReportsScreen';
 import { LocaleContext, loadLang } from './src/i18n/i18n';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import ConfigService from './src/services/ConfigService';
+import FirebaseService from './src/services/FirebaseService';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -44,12 +45,21 @@ function AppContent() {
 
   React.useEffect(() => {
     (async () => {
-      // Initialize ConfigService first
-      await ConfigService.initialize();
-      console.log('✅ ConfigService initialized on app startup');
+      try {
+        // Initialize ConfigService first
+        await ConfigService.initialize();
+        console.log('✅ ConfigService initialized on app startup');
 
-      // Load language
-      setLang(await loadLang());
+        // Initialize Firebase services
+        await FirebaseService.initialize();
+        console.log('✅ Firebase services initialized on app startup');
+
+        // Load language
+        setLang(await loadLang());
+      } catch (error) {
+        console.error('❌ Error during app initialization:', error);
+        // App can still work with HTTP fallback if Firebase fails
+      }
     })();
   }, []);
 

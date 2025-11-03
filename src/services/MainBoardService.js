@@ -1,9 +1,12 @@
 import { CONFIG } from '../config/config';
 import ConfigService from './ConfigService';
+import DeviceService from './DeviceService';
+import CommandService from './CommandService';
+import { DEVICE_CONFIG } from '../config/hardware.config';
 
 /**
- * HTTP-based service for Main ESP32 Control Board
- * Uses HTTP polling instead of WebSocket for reliability with standard WebServer library
+ * Firebase-enhanced service for Main ESP32 Control Board
+ * Uses Firebase real-time listeners as primary source with HTTP polling as fallback
  */
 class MainBoardService {
   constructor() {
@@ -12,11 +15,16 @@ class MainBoardService {
     this.listeners = {};
     this.isConnected = false;
     this.lastData = null;
+    this.useFirebase = true;
+    this.firebaseSubscriptions = [];
 
     // Subscribe to config changes
     ConfigService.subscribe((config) => {
       this.updateBaseUrl();
     });
+
+    // Initialize Firebase services
+    this.initializeFirebase();
   }
 
   /**
@@ -31,11 +39,99 @@ class MainBoardService {
   }
 
   /**
-   * Start polling the main board for sensor data
+   * Initialize Firebase services and subscriptions
+   */
+  async initializeFirebase() {
+    try {
+      console.log('🔥 Initializing Firebase services for MainBoardService...');
+
+      // Initialize device service
+      await DeviceService.initialize();
+      await CommandService.initialize();
+
+      console.log('✅ Firebase services initialized for MainBoardService');
+    } catch (error) {
+      console.error('❌ Failed to initialize Firebase services:', error);
+      this.useFirebase = false;
+      console.log('📡 Falling back to HTTP polling mode');
+    }
+  }
+
+  /**
+   * Start data monitoring (Firebase real-time or HTTP polling fallback)
    */
   startPolling(interval = 2000) {
     this.stopPolling();
 
+    if (this.useFirebase) {
+      console.log('🔥 Starting Firebase real-time monitoring...');
+      this.startFirebaseListeners();
+    } else {
+      console.log('📡 Starting HTTP polling fallback...');
+      this.startHttpPolling(interval);
+    }
+  }
+
+  /**
+   * Start Firebase real-time listeners
+   */
+  startFirebaseListeners() {
+    const deviceId = DEVICE_CONFIG.MAIN_DEVICE_ID;
+
+    // Subscribe to sensor data
+    const sensorUnsubscribe = DeviceService.subscribeToSensorData(deviceId, (data) => {
+      if (data && Object.keys(data).length > 0) {
+        // Mark as connected
+        if (!this.isConnected) {
+          this.isConnected = true;
+          this.emit('connected', true);
+          console.log('✅ Main Board connected via Firebase');
+        }
+
+        // Transform Firebase data to match existing format
+        this.lastData = {
+          type: 'sensor_data',
+          soilHumidity: data.soilHumidity || data.soil_humidity,
+          soilTemperature: data.soilTemperature || data.soil_temperature,
+          soilConductivity: data.soilConductivity || data.soil_conductivity,
+          ph: data.ph,
+          motion: data.motion || data.motionDetected,
+          currentTrack: data.currentTrack || data.current_track,
+          volume: data.volume,
+          servoActive: data.servoActive || data.servo_active,
+          timestamp: data.timestamp || Date.now(),
+        };
+
+        this.emit('data', this.lastData);
+      }
+    });
+
+    if (sensorUnsubscribe) {
+      this.firebaseSubscriptions.push(sensorUnsubscribe);
+    }
+
+    // Subscribe to device status
+    const deviceUnsubscribe = DeviceService.subscribeToDevice(deviceId, (deviceData) => {
+      if (deviceData) {
+        const isOnline = DeviceService.isDeviceOnline(deviceData.last_seen);
+
+        if (isOnline !== this.isConnected) {
+          this.isConnected = isOnline;
+          this.emit('connected', isOnline);
+          console.log(`📱 Device ${deviceId} ${isOnline ? 'connected' : 'disconnected'}`);
+        }
+      }
+    });
+
+    if (deviceUnsubscribe) {
+      this.firebaseSubscriptions.push(deviceUnsubscribe);
+    }
+  }
+
+  /**
+   * Start HTTP polling as fallback
+   */
+  startHttpPolling(interval = 2000) {
     // Initial fetch
     this.fetchStatus();
 
@@ -44,18 +140,28 @@ class MainBoardService {
       this.fetchStatus();
     }, interval);
 
-    console.log(`📡 Started polling Main Board at ${this.baseUrl}`);
+    console.log(`📡 Started HTTP polling Main Board at ${this.baseUrl}`);
   }
 
   /**
-   * Stop polling
+   * Stop data monitoring (both Firebase and HTTP polling)
    */
   stopPolling() {
+    // Stop HTTP polling
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
       this.pollingInterval = null;
-      console.log('🛑 Stopped polling Main Board');
+      console.log('🛑 Stopped HTTP polling Main Board');
     }
+
+    // Stop Firebase subscriptions
+    this.firebaseSubscriptions.forEach(unsubscribe => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    });
+    this.firebaseSubscriptions = [];
+    console.log('🛑 Stopped Firebase subscriptions');
   }
 
   /**
@@ -146,15 +252,22 @@ class MainBoardService {
   }
 
   /**
-   * Control Methods (matching WebSocket commands)
+   * Control Methods (Firebase-enhanced with HTTP fallback)
    */
 
   async playTrack(track) {
+    if (this.useFirebase) {
+      return await CommandService.setTrack(track);
+    }
     return this.sendCommand('/play', { track });
   }
 
   async nextTrack() {
-    // Get current status, increment track
+    if (this.useFirebase) {
+      return await CommandService.nextTrack();
+    }
+
+    // HTTP fallback - Get current status, increment track
     const status = await this.fetchStatus();
     if (status) {
       let nextTrack = status.currentTrack + 1;
@@ -167,20 +280,32 @@ class MainBoardService {
   }
 
   async setVolume(level) {
+    if (this.useFirebase) {
+      return await CommandService.setVolume(level);
+    }
     return this.sendCommand('/volume', { level });
   }
 
   async moveArms() {
+    if (this.useFirebase) {
+      return await CommandService.oscillateArms();
+    }
     return this.sendCommand('/move-arms');
   }
 
   async stop() {
+    if (this.useFirebase) {
+      return await CommandService.stop();
+    }
     return this.sendCommand('/stop');
   }
 
   async triggerAlarm() {
-    // Note: /trigger-alarm endpoint may not exist in all firmware versions
-    // Fallback: Play next track + move arms
+    if (this.useFirebase) {
+      return await CommandService.triggerAlarm();
+    }
+
+    // HTTP fallback: Play next track + move arms
     const playResult = await this.nextTrack();
     const moveResult = await this.moveArms();
     return {
@@ -226,12 +351,36 @@ class MainBoardService {
   }
 
   /**
-   * Disconnect
+   * Disconnect and cleanup
    */
   disconnect() {
     this.stopPolling();
     this.isConnected = false;
     this.emit('connected', false);
+    console.log('📱 MainBoardService disconnected');
+  }
+
+  /**
+   * Toggle between Firebase and HTTP modes
+   */
+  toggleFirebaseMode(enabled) {
+    if (enabled !== this.useFirebase) {
+      this.useFirebase = enabled;
+      console.log(`🔄 Switching to ${enabled ? 'Firebase' : 'HTTP'} mode`);
+
+      // Restart monitoring with new mode
+      if (this.pollingInterval || this.firebaseSubscriptions.length > 0) {
+        this.stopPolling();
+        this.startPolling();
+      }
+    }
+  }
+
+  /**
+   * Get current connection mode
+   */
+  getConnectionMode() {
+    return this.useFirebase ? 'firebase' : 'http';
   }
 }
 
