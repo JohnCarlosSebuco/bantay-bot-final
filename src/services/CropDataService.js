@@ -1,318 +1,412 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const CROP_DATA_KEY = '@crop_data';
-const HARVEST_HISTORY_KEY = '@harvest_history';
-const ENVIRONMENTAL_HISTORY_KEY = '@environmental_history';
-const RAINFALL_LOG_KEY = '@rainfall_log';
+import FirebaseService from './FirebaseService';
+import { FIREBASE_COLLECTIONS } from '../config/hardware.config';
 
 class CropDataService {
-  /**
-   * Save current crop information
-   */
-  async saveCropData(cropData) {
-    try {
-      await AsyncStorage.setItem(CROP_DATA_KEY, JSON.stringify({
-        ...cropData,
-        lastUpdated: new Date().toISOString(),
-      }));
-      return true;
-    } catch (error) {
-      console.error('Error saving crop data:', error);
-      return false;
-    }
+  constructor() {
+    this.initialized = false;
   }
 
   /**
-   * Get current crop information
+   * Initialize Firebase connection
    */
-  async getCropData() {
-    try {
-      const data = await AsyncStorage.getItem(CROP_DATA_KEY);
-      return data ? JSON.parse(data) : null;
-    } catch (error) {
-      console.error('Error getting crop data:', error);
-      return null;
-    }
+  async initialize() {
+    await FirebaseService.initialize();
+    this.initialized = true;
   }
 
-  /**
-   * Add harvest record
-   */
-  async addHarvestRecord(harvestData) {
-    try {
-      const history = await this.getHarvestHistory();
+  // ===========================
+  // Harvest Data Management
+  // ===========================
 
-      const newRecord = {
-        id: Date.now().toString(),
-        date: harvestData.date || new Date().toISOString(),
-        cropType: harvestData.cropType,
-        yield: parseFloat(harvestData.yield),
-        quality: harvestData.quality || 'good',
-        plotSize: parseFloat(harvestData.plotSize || 0),
-        notes: harvestData.notes || '',
-        weatherConditions: harvestData.weatherConditions || {},
-        birdDamagePercent: parseFloat(harvestData.birdDamagePercent || 0),
+  /**
+   * Add harvest data
+   */
+  async addHarvestData(harvestData) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const db = FirebaseService.getDatabase();
+    if (!db) {
+      console.error('❌ Firebase not initialized');
+      return { success: false, error: 'Firebase not initialized' };
+    }
+
+    try {
+      const harvestCollection = db.collection(FIREBASE_COLLECTIONS.HARVEST_DATA);
+
+      const data = {
         ...harvestData,
+        created_at: db.FieldValue.serverTimestamp(),
+        updated_at: db.FieldValue.serverTimestamp()
       };
 
-      history.unshift(newRecord);
+      const docRef = await harvestCollection.add(data);
+      console.log('✅ Harvest data added:', docRef.id);
+      return { success: true, id: docRef.id };
 
-      await AsyncStorage.setItem(HARVEST_HISTORY_KEY, JSON.stringify(history));
-      return newRecord;
     } catch (error) {
-      console.error('Error adding harvest record:', error);
-      return null;
+      console.error('❌ Error adding harvest data:', error);
+      return { success: false, error: error.message };
     }
   }
 
   /**
-   * Get all harvest history
+   * Get harvest data with optional filtering
    */
-  async getHarvestHistory() {
-    try {
-      const data = await AsyncStorage.getItem(HARVEST_HISTORY_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch (error) {
-      console.error('Error getting harvest history:', error);
+  async getHarvestData(filters = {}) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const db = FirebaseService.getDatabase();
+    if (!db) {
+      console.error('❌ Firebase not initialized');
       return [];
     }
-  }
 
-  /**
-   * Get harvest history for specific crop
-   */
-  async getHarvestHistoryByCrop(cropType) {
     try {
-      const history = await this.getHarvestHistory();
-      return history.filter(record => record.cropType === cropType);
-    } catch (error) {
-      return [];
-    }
-  }
+      let query = db.collection(FIREBASE_COLLECTIONS.HARVEST_DATA);
 
-  /**
-   * Calculate average yield for crop type
-   */
-  async getAverageYield(cropType) {
-    try {
-      const history = await this.getHarvestHistoryByCrop(cropType);
-
-      if (history.length === 0) return 0;
-
-      const totalYield = history.reduce((sum, record) => sum + record.yield, 0);
-      return totalYield / history.length;
-    } catch (error) {
-      return 0;
-    }
-  }
-
-  /**
-   * Log daily environmental data
-   */
-  async logEnvironmentalData(data) {
-    try {
-      const history = await this.getEnvironmentalHistory();
-
-      const today = new Date().toISOString().split('T')[0];
-
-      // Check if entry for today exists
-      const existingIndex = history.findIndex(record =>
-        record.date.split('T')[0] === today
-      );
-
-      const newRecord = {
-        date: new Date().toISOString(),
-        avgTemp: parseFloat(data.avgTemp || 0),
-        avgHumidity: parseFloat(data.avgHumidity || 0),
-        avgSoilMoisture: parseFloat(data.avgSoilMoisture || 0),
-        minTemp: parseFloat(data.minTemp || data.avgTemp || 0),
-        maxTemp: parseFloat(data.maxTemp || data.avgTemp || 0),
-        stressEvents: data.stressEvents || [],
-        optimalConditions: data.optimalConditions || false,
-        ...data,
-      };
-
-      if (existingIndex >= 0) {
-        // Update existing record
-        history[existingIndex] = newRecord;
-      } else {
-        // Add new record
-        history.unshift(newRecord);
+      // Apply filters
+      if (filters.cropType) {
+        query = query.where('cropType', '==', filters.cropType);
+      }
+      if (filters.startDate) {
+        query = query.where('harvestDate', '>=', filters.startDate);
+      }
+      if (filters.endDate) {
+        query = query.where('harvestDate', '<=', filters.endDate);
       }
 
-      // Keep only last 90 days
-      const trimmed = history.slice(0, 90);
+      // Order by harvest date (most recent first)
+      query = query.orderBy('harvestDate', 'desc');
 
-      await AsyncStorage.setItem(ENVIRONMENTAL_HISTORY_KEY, JSON.stringify(trimmed));
-      return newRecord;
-    } catch (error) {
-      console.error('Error logging environmental data:', error);
-      return null;
-    }
-  }
+      // Apply limit if specified
+      if (filters.limit) {
+        query = query.limit(filters.limit);
+      }
 
-  /**
-   * Get environmental history
-   */
-  async getEnvironmentalHistory() {
-    try {
-      const data = await AsyncStorage.getItem(ENVIRONMENTAL_HISTORY_KEY);
-      return data ? JSON.parse(data) : [];
+      const snapshot = await query.get();
+      const harvestData = [];
+
+      snapshot.forEach((doc) => {
+        harvestData.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+
+      console.log(`📊 Retrieved ${harvestData.length} harvest records`);
+      return harvestData;
+
     } catch (error) {
-      console.error('Error getting environmental history:', error);
+      console.error('❌ Error getting harvest data:', error);
       return [];
     }
   }
 
   /**
-   * Add rainfall record
+   * Subscribe to harvest data updates
    */
-  async addRainfallRecord(amount, date = new Date()) {
+  subscribeToHarvestData(callback, filters = {}) {
+    const db = FirebaseService.getDatabase();
+    if (!db) {
+      console.error('❌ Firebase not initialized');
+      return null;
+    }
+
     try {
-      const rainfallLog = await this.getRainfallLog();
+      let query = db.collection(FIREBASE_COLLECTIONS.HARVEST_DATA);
 
-      const newRecord = {
-        id: Date.now().toString(),
-        date: date.toISOString(),
-        amount: parseFloat(amount),
-        notes: '',
-      };
+      // Apply filters
+      if (filters.cropType) {
+        query = query.where('cropType', '==', filters.cropType);
+      }
 
-      rainfallLog.unshift(newRecord);
+      // Order by harvest date (most recent first)
+      query = query.orderBy('harvestDate', 'desc');
 
-      // Keep only last 90 days
-      const trimmed = rainfallLog.slice(0, 90);
+      // Apply limit if specified
+      if (filters.limit) {
+        query = query.limit(filters.limit);
+      }
 
-      await AsyncStorage.setItem(RAINFALL_LOG_KEY, JSON.stringify(trimmed));
-      return newRecord;
+      const unsubscribe = query.onSnapshot((snapshot) => {
+        const harvestData = [];
+        snapshot.forEach((doc) => {
+          harvestData.push({
+            id: doc.id,
+            ...doc.data()
+          });
+        });
+        console.log(`📊 Harvest data updated: ${harvestData.length} records`);
+        callback(harvestData);
+      }, (error) => {
+        console.error('❌ Error subscribing to harvest data:', error);
+        callback([]);
+      });
+
+      return unsubscribe;
+
     } catch (error) {
-      console.error('Error adding rainfall record:', error);
+      console.error('❌ Error setting up harvest data subscription:', error);
       return null;
     }
   }
 
   /**
-   * Get rainfall log
+   * Update harvest data
    */
-  async getRainfallLog() {
+  async updateHarvestData(harvestId, updates) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const db = FirebaseService.getDatabase();
+    if (!db) {
+      console.error('❌ Firebase not initialized');
+      return { success: false, error: 'Firebase not initialized' };
+    }
+
     try {
-      const data = await AsyncStorage.getItem(RAINFALL_LOG_KEY);
-      return data ? JSON.parse(data) : [];
+      const harvestDoc = db.collection(FIREBASE_COLLECTIONS.HARVEST_DATA).doc(harvestId);
+
+      const data = {
+        ...updates,
+        updated_at: db.FieldValue.serverTimestamp()
+      };
+
+      await harvestDoc.update(data);
+      console.log('✅ Harvest data updated:', harvestId);
+      return { success: true };
+
     } catch (error) {
-      console.error('Error getting rainfall log:', error);
+      console.error('❌ Error updating harvest data:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Delete harvest data
+   */
+  async deleteHarvestData(harvestId) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const db = FirebaseService.getDatabase();
+    if (!db) {
+      console.error('❌ Firebase not initialized');
+      return { success: false, error: 'Firebase not initialized' };
+    }
+
+    try {
+      await db.collection(FIREBASE_COLLECTIONS.HARVEST_DATA).doc(harvestId).delete();
+      console.log('✅ Harvest data deleted:', harvestId);
+      return { success: true };
+
+    } catch (error) {
+      console.error('❌ Error deleting harvest data:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ===========================
+  // Rainfall Data Management
+  // ===========================
+
+  /**
+   * Add rainfall log entry
+   */
+  async addRainfallLog(rainfallData) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const db = FirebaseService.getDatabase();
+    if (!db) {
+      console.error('❌ Firebase not initialized');
+      return { success: false, error: 'Firebase not initialized' };
+    }
+
+    try {
+      const rainfallCollection = db.collection(FIREBASE_COLLECTIONS.RAINFALL_LOG);
+
+      const data = {
+        ...rainfallData,
+        created_at: db.FieldValue.serverTimestamp()
+      };
+
+      const docRef = await rainfallCollection.add(data);
+      console.log('✅ Rainfall log added:', docRef.id);
+      return { success: true, id: docRef.id };
+
+    } catch (error) {
+      console.error('❌ Error adding rainfall log:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Get rainfall data with optional filtering
+   */
+  async getRainfallData(filters = {}) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const db = FirebaseService.getDatabase();
+    if (!db) {
+      console.error('❌ Firebase not initialized');
+      return [];
+    }
+
+    try {
+      let query = db.collection(FIREBASE_COLLECTIONS.RAINFALL_LOG);
+
+      // Apply date filters
+      if (filters.startDate) {
+        query = query.where('date', '>=', filters.startDate);
+      }
+      if (filters.endDate) {
+        query = query.where('date', '<=', filters.endDate);
+      }
+
+      // Order by date (most recent first)
+      query = query.orderBy('date', 'desc');
+
+      // Apply limit if specified
+      if (filters.limit) {
+        query = query.limit(filters.limit);
+      }
+
+      const snapshot = await query.get();
+      const rainfallData = [];
+
+      snapshot.forEach((doc) => {
+        rainfallData.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+
+      console.log(`🌧️ Retrieved ${rainfallData.length} rainfall records`);
+      return rainfallData;
+
+    } catch (error) {
+      console.error('❌ Error getting rainfall data:', error);
       return [];
     }
   }
 
   /**
-   * Delete harvest record
+   * Subscribe to rainfall data updates
    */
-  async deleteHarvestRecord(id) {
-    try {
-      const history = await this.getHarvestHistory();
-      const filtered = history.filter(record => record.id !== id);
-      await AsyncStorage.setItem(HARVEST_HISTORY_KEY, JSON.stringify(filtered));
-      return true;
-    } catch (error) {
-      console.error('Error deleting harvest record:', error);
-      return false;
+  subscribeToRainfallData(callback, filters = {}) {
+    const db = FirebaseService.getDatabase();
+    if (!db) {
+      console.error('❌ Firebase not initialized');
+      return null;
     }
-  }
 
-  /**
-   * Delete rainfall record
-   */
-  async deleteRainfallRecord(id) {
     try {
-      const log = await this.getRainfallLog();
-      const filtered = log.filter(record => record.id !== id);
-      await AsyncStorage.setItem(RAINFALL_LOG_KEY, JSON.stringify(filtered));
-      return true;
-    } catch (error) {
-      console.error('Error deleting rainfall record:', error);
-      return false;
-    }
-  }
+      let query = db.collection(FIREBASE_COLLECTIONS.RAINFALL_LOG);
 
-  /**
-   * Clear all crop data
-   */
-  async clearAllData() {
-    try {
-      await AsyncStorage.multiRemove([
-        CROP_DATA_KEY,
-        HARVEST_HISTORY_KEY,
-        ENVIRONMENTAL_HISTORY_KEY,
-        RAINFALL_LOG_KEY,
-      ]);
-      return true;
-    } catch (error) {
-      console.error('Error clearing data:', error);
-      return false;
-    }
-  }
+      // Apply date filters
+      if (filters.startDate) {
+        query = query.where('date', '>=', filters.startDate);
+      }
+      if (filters.endDate) {
+        query = query.where('date', '<=', filters.endDate);
+      }
 
-  /**
-   * Export all data
-   */
-  async exportData() {
-    try {
-      const cropData = await this.getCropData();
-      const harvestHistory = await this.getHarvestHistory();
-      const envHistory = await this.getEnvironmentalHistory();
-      const rainfallLog = await this.getRainfallLog();
+      // Order by date (most recent first)
+      query = query.orderBy('date', 'desc');
 
-      return {
-        exportDate: new Date().toISOString(),
-        cropData,
-        harvestHistory,
-        environmentalHistory: envHistory,
-        rainfallLog,
-      };
+      // Apply limit if specified
+      if (filters.limit) {
+        query = query.limit(filters.limit);
+      }
+
+      const unsubscribe = query.onSnapshot((snapshot) => {
+        const rainfallData = [];
+        snapshot.forEach((doc) => {
+          rainfallData.push({
+            id: doc.id,
+            ...doc.data()
+          });
+        });
+        console.log(`🌧️ Rainfall data updated: ${rainfallData.length} records`);
+        callback(rainfallData);
+      }, (error) => {
+        console.error('❌ Error subscribing to rainfall data:', error);
+        callback([]);
+      });
+
+      return unsubscribe;
+
     } catch (error) {
-      console.error('Error exporting data:', error);
+      console.error('❌ Error setting up rainfall data subscription:', error);
       return null;
     }
   }
 
+  // ===========================
+  // Data Analytics
+  // ===========================
+
   /**
-   * Get statistics summary
+   * Get harvest summary statistics
    */
-  async getStatisticsSummary() {
-    try {
-      const harvestHistory = await this.getHarvestHistory();
-      const envHistory = await this.getEnvironmentalHistory();
-      const rainfallLog = await this.getRainfallLog();
+  async getHarvestSummary(timeRange = 'month') {
+    const harvestData = await this.getHarvestData();
 
-      const totalHarvests = harvestHistory.length;
-      const totalYield = harvestHistory.reduce((sum, h) => sum + h.yield, 0);
-      const avgYield = totalHarvests > 0 ? totalYield / totalHarvests : 0;
+    // Calculate summary statistics
+    const summary = {
+      totalHarvests: harvestData.length,
+      totalYield: 0,
+      averageYield: 0,
+      cropTypes: {},
+      recentHarvest: null
+    };
 
-      const totalRainfall = rainfallLog.reduce((sum, r) => sum + r.amount, 0);
-      const avgDailyTemp = envHistory.length > 0 ?
-        envHistory.reduce((sum, e) => sum + e.avgTemp, 0) / envHistory.length : 0;
+    if (harvestData.length > 0) {
+      summary.totalYield = harvestData.reduce((sum, harvest) => sum + (harvest.yield || 0), 0);
+      summary.averageYield = summary.totalYield / harvestData.length;
+      summary.recentHarvest = harvestData[0]; // Most recent (already sorted)
 
-      return {
-        harvests: {
-          total: totalHarvests,
-          totalYield: totalYield.toFixed(1),
-          avgYield: avgYield.toFixed(1),
-        },
-        environment: {
-          daysTracked: envHistory.length,
-          avgTemp: avgDailyTemp.toFixed(1),
-        },
-        rainfall: {
-          total: totalRainfall.toFixed(1),
-          eventsLogged: rainfallLog.length,
-        },
-      };
-    } catch (error) {
-      console.error('Error getting statistics:', error);
-      return null;
+      // Count by crop type
+      harvestData.forEach(harvest => {
+        const cropType = harvest.cropType || 'unknown';
+        summary.cropTypes[cropType] = (summary.cropTypes[cropType] || 0) + 1;
+      });
     }
+
+    return summary;
+  }
+
+  /**
+   * Get rainfall summary statistics
+   */
+  async getRainfallSummary(timeRange = 'month') {
+    const rainfallData = await this.getRainfallData();
+
+    const summary = {
+      totalEntries: rainfallData.length,
+      totalRainfall: 0,
+      averageRainfall: 0,
+      recentRainfall: null
+    };
+
+    if (rainfallData.length > 0) {
+      summary.totalRainfall = rainfallData.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+      summary.averageRainfall = summary.totalRainfall / rainfallData.length;
+      summary.recentRainfall = rainfallData[0]; // Most recent (already sorted)
+    }
+
+    return summary;
   }
 }
 
-const cropDataService = new CropDataService();
-export default cropDataService;
+export default new CropDataService();
