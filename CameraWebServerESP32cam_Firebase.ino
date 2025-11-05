@@ -118,6 +118,9 @@ bool grayscaleMode = false;
 // ===========================
 
 void cameraTokenCallback(TokenInfo info) {
+  if (info.status == token_status_error) {
+    Serial.printf("Token error: %s\n", info.error.message.c_str());
+  }
   Serial.printf("Token status: %s\n", info.status == token_status_ready ? "ready" : "not ready");
 }
 
@@ -134,26 +137,34 @@ void initializeFirebase() {
   config.timeout.serverResponse = 10 * 1000;  // 10 seconds
   config.timeout.socketConnection = 10 * 1000;
 
-  // For Firestore, we need proper authentication
-  // Anonymous authentication (make sure it's enabled in Firebase Console)
-  auth.user.email = "";
-  auth.user.password = "";
+  // Sign up anonymously - this creates a new anonymous user automatically
+  Serial.println("📝 Creating anonymous Firebase user...");
 
-  Serial.println("📝 Starting Firebase connection...");
-
-  // Initialize Firebase
+  // Initialize Firebase first
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
 
+  // Try to sign up anonymously (this will create a new user)
+  Serial.println("🔐 Signing up anonymously...");
+  if (Firebase.signUp(&config, &auth, "", "")) {
+    Serial.println("✅ Anonymous sign up successful!");
+  } else {
+    Serial.printf("⚠️ Sign up returned: %s\n", config.signer.signupError.message.c_str());
+  }
+
   // Wait for Firebase to be ready with better error reporting
+  Serial.println("⏳ Waiting for Firebase to be ready...");
   int attempts = 0;
-  while (!Firebase.ready() && attempts < 20) {
+  while (!Firebase.ready() && attempts < 30) {
     Serial.print(".");
     delay(1000);
     attempts++;
 
     if (attempts % 5 == 0) {
-      Serial.printf("\nAttempt %d/20...\n", attempts);
+      Serial.printf("\nAttempt %d/30...\n", attempts);
+      if (Firebase.isTokenExpired()) {
+        Serial.println("🔄 Token expired, refreshing...");
+      }
     }
   }
 
@@ -165,7 +176,8 @@ void initializeFirebase() {
   } else {
     firebaseConnected = false;
     Serial.println("\n❌ Firebase connection failed, using HTTP fallback");
-    Serial.println("💡 Check: API key, Firebase Console authentication settings");
+    Serial.printf("💡 Error: %s\n", config.signer.signupError.message.c_str());
+    Serial.println("💡 Make sure Anonymous Authentication is enabled in Firebase Console");
   }
 }
 
