@@ -206,11 +206,12 @@ void updateDeviceStatus() {
   if (!firebaseConnected) return;
 
   FirebaseJson json;
-  json.set("ip_address", WiFi.localIP().toString());
-  json.set("last_seen", Firebase.getCurrentTime());
-  json.set("status", "online");
-  json.set("firmware_version", "2.0.0-firebase");
-  json.set("heap_free", ESP.getFreeHeap());
+  // Firestore requires fields to be formatted with type information
+  json.set("fields/ip_address/stringValue", WiFi.localIP().toString());
+  json.set("fields/last_seen/integerValue", String(millis()));
+  json.set("fields/status/stringValue", "online");
+  json.set("fields/firmware_version/stringValue", "2.0.0-firebase");
+  json.set("fields/heap_free/integerValue", String(ESP.getFreeHeap()));
 
   String path = "devices/" + String(MAIN_DEVICE_ID);
 
@@ -225,14 +226,15 @@ void publishSensorData() {
   if (!firebaseConnected) return;
 
   FirebaseJson json;
-  json.set("soilHumidity", soilHumidity);
-  json.set("soilTemperature", soilTemperature);
-  json.set("soilConductivity", soilConductivity);
-  json.set("ph", soilPH);
-  json.set("currentTrack", currentTrack);
-  json.set("volume", volumeLevel);
-  json.set("servoActive", servoOscillating);
-  json.set("timestamp", Firebase.getCurrentTime());
+  // Firestore requires fields to be formatted with type information
+  json.set("fields/soilHumidity/doubleValue", soilHumidity);
+  json.set("fields/soilTemperature/doubleValue", soilTemperature);
+  json.set("fields/soilConductivity/doubleValue", soilConductivity);
+  json.set("fields/ph/doubleValue", soilPH);
+  json.set("fields/currentTrack/integerValue", String(currentTrack));
+  json.set("fields/volume/integerValue", String(volumeLevel));
+  json.set("fields/servoActive/booleanValue", servoOscillating);
+  json.set("fields/timestamp/integerValue", String(millis()));
 
   String path = "sensor_data/" + String(MAIN_DEVICE_ID);
 

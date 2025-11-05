@@ -185,14 +185,15 @@ void updateCameraDeviceStatus() {
   if (!firebaseConnected) return;
 
   FirebaseJson json;
-  json.set("ip_address", WiFi.localIP().toString());
-  json.set("last_seen", Firebase.getCurrentTime());
-  json.set("status", "online");
-  json.set("firmware_version", "2.0.0-firebase-camera");
-  json.set("heap_free", ESP.getFreeHeap());
-  json.set("stream_url", "http://" + WiFi.localIP().toString() + ":80/stream");
-  json.set("detection_enabled", birdDetectionEnabled);
-  json.set("birds_detected_today", birdsDetectedToday);
+  // Firestore requires fields to be formatted with type information
+  json.set("fields/ip_address/stringValue", WiFi.localIP().toString());
+  json.set("fields/last_seen/integerValue", String(millis()));
+  json.set("fields/status/stringValue", "online");
+  json.set("fields/firmware_version/stringValue", "2.0.0-firebase-camera");
+  json.set("fields/heap_free/integerValue", String(ESP.getFreeHeap()));
+  json.set("fields/stream_url/stringValue", "http://" + WiFi.localIP().toString() + ":80/stream");
+  json.set("fields/detection_enabled/booleanValue", birdDetectionEnabled);
+  json.set("fields/birds_detected_today/integerValue", String(birdsDetectedToday));
 
   String path = "devices/" + String(CAMERA_DEVICE_ID);
 
@@ -207,14 +208,15 @@ void reportBirdDetection(int birdSize, int confidence) {
   if (!firebaseConnected) return;
 
   FirebaseJson json;
-  json.set("device_id", CAMERA_DEVICE_ID);
-  json.set("timestamp", Firebase.getCurrentTime());
-  json.set("bird_size", birdSize);
-  json.set("confidence", confidence);
-  json.set("detection_zone", String(detectionZoneLeft) + "," + String(detectionZoneTop) + "," +
+  // Firestore requires fields to be formatted with type information
+  json.set("fields/device_id/stringValue", CAMERA_DEVICE_ID);
+  json.set("fields/timestamp/integerValue", String(millis()));
+  json.set("fields/bird_size/integerValue", String(birdSize));
+  json.set("fields/confidence/integerValue", String(confidence));
+  json.set("fields/detection_zone/stringValue", String(detectionZoneLeft) + "," + String(detectionZoneTop) + "," +
            String(detectionZoneRight) + "," + String(detectionZoneBottom));
-  json.set("camera_resolution", cameraResolution);
-  json.set("sensitivity", detectionSensitivity);
+  json.set("fields/camera_resolution/stringValue", cameraResolution);
+  json.set("fields/sensitivity/integerValue", String(detectionSensitivity));
 
   String path = "detection_history";
 
