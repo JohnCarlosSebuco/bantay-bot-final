@@ -141,9 +141,11 @@ void initializeFirebase() {
 
   // Configure Firebase
   config.api_key = API_KEY;
-  config.auth.user.email = "";  // Anonymous auth
-  config.auth.user.password = "";
   config.database_url = "";  // We're using Firestore, not Realtime Database
+
+  // Configure authentication (anonymous)
+  auth.user.email = "";  // Anonymous auth
+  auth.user.password = "";
 
   // Initialize Firebase
   Firebase.begin(&config, &auth);
@@ -215,7 +217,8 @@ void checkFirebaseCommands() {
 
   String path = "commands/" + String(MAIN_DEVICE_ID) + "/pending";
 
-  if (Firebase.Firestore.listDocuments(&fbdo, FIREBASE_PROJECT_ID, "", path.c_str())) {
+  // listDocuments requires all 9 parameters: projectId, databaseId, collectionId, pageSize, pageToken, orderBy, mask, showMissing
+  if (Firebase.Firestore.listDocuments(&fbdo, FIREBASE_PROJECT_ID, "", path.c_str(), 100, "", "", "", false)) {
     FirebaseJsonArray arr;
     arr.setJsonArrayData(fbdo.payload().c_str());
 
