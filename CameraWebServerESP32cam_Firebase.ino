@@ -117,36 +117,55 @@ bool grayscaleMode = false;
 // Firebase Functions
 // ===========================
 
+void tokenStatusCallback(TokenInfo info) {
+  Serial.printf("Token status: %s\n", info.status == token_status_ready ? "ready" : "not ready");
+}
+
 void initializeFirebase() {
   Serial.println("🔥 Initializing Firebase for Camera...");
 
   // Configure Firebase
   config.api_key = API_KEY;
-  config.database_url = "";  // We're using Firestore, not Realtime Database
 
-  // Configure authentication (anonymous)
-  auth.user.email = "";  // Anonymous auth
+  // Assign the token status callback function
+  config.token_status_callback = tokenStatusCallback;
+
+  // Set timeouts
+  config.timeout.serverResponse = 10 * 1000;  // 10 seconds
+  config.timeout.socketConnection = 10 * 1000;
+
+  // For Firestore, we need proper authentication
+  // Anonymous authentication (make sure it's enabled in Firebase Console)
+  auth.user.email = "";
   auth.user.password = "";
+
+  Serial.println("📝 Starting Firebase connection...");
 
   // Initialize Firebase
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
 
-  // Wait for Firebase to be ready
+  // Wait for Firebase to be ready with better error reporting
   int attempts = 0;
-  while (!Firebase.ready() && attempts < 10) {
+  while (!Firebase.ready() && attempts < 20) {
     Serial.print(".");
     delay(1000);
     attempts++;
+
+    if (attempts % 5 == 0) {
+      Serial.printf("\nAttempt %d/20...\n", attempts);
+    }
   }
 
   if (Firebase.ready()) {
     firebaseConnected = true;
     Serial.println("\n✅ Firebase connected successfully!");
+    Serial.printf("📧 User ID: %s\n", auth.token.uid.c_str());
     updateCameraDeviceStatus();
   } else {
     firebaseConnected = false;
     Serial.println("\n❌ Firebase connection failed, using HTTP fallback");
+    Serial.println("💡 Check: API key, Firebase Console authentication settings");
   }
 }
 
