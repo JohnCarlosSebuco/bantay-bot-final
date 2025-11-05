@@ -136,7 +136,7 @@ const unsigned long DETECTION_COOLDOWN = 10000; // 10 seconds
 // Firebase Functions
 // ===========================
 
-void tokenStatusCallback(TokenInfo info) {
+void bantayBotTokenCallback(TokenInfo info) {
   Serial.printf("Token status: %s\n", info.status == token_status_ready ? "ready" : "not ready");
 }
 
@@ -147,7 +147,7 @@ void initializeFirebase() {
   config.api_key = API_KEY;
 
   // Assign the token status callback function
-  config.token_status_callback = tokenStatusCallback;
+  config.token_status_callback = bantayBotTokenCallback;
 
   // Set timeouts
   config.timeout.serverResponse = 10 * 1000;  // 10 seconds

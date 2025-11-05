@@ -117,7 +117,7 @@ bool grayscaleMode = false;
 // Firebase Functions
 // ===========================
 
-void tokenStatusCallback(TokenInfo info) {
+void cameraTokenCallback(TokenInfo info) {
   Serial.printf("Token status: %s\n", info.status == token_status_ready ? "ready" : "not ready");
 }
 
@@ -128,7 +128,7 @@ void initializeFirebase() {
   config.api_key = API_KEY;
 
   // Assign the token status callback function
-  config.token_status_callback = tokenStatusCallback;
+  config.token_status_callback = cameraTokenCallback;
 
   // Set timeouts
   config.timeout.serverResponse = 10 * 1000;  // 10 seconds
