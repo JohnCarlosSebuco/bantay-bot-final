@@ -45,8 +45,8 @@ FirebaseConfig config;
 bool firebaseConnected = false;
 unsigned long lastFirebaseUpdate = 0;
 unsigned long lastCommandCheck = 0;
-const unsigned long FIREBASE_UPDATE_INTERVAL = 5000;  // 5 seconds
-const unsigned long COMMAND_CHECK_INTERVAL = 1000;    // 1 second
+const unsigned long FIREBASE_UPDATE_INTERVAL = 10000;  // 10 seconds (reduced frequency)
+const unsigned long COMMAND_CHECK_INTERVAL = 5000;     // 5 seconds (reduced frequency)
 
 // ===========================
 // Pin Definitions
@@ -129,22 +129,51 @@ void cameraTokenCallback(TokenInfo info) {
 
 void initializeFirebase() {
   Serial.println("🔥 Initializing Firebase for Camera...");
+  Serial.printf("💾 Free heap before Firebase: %d bytes\n", ESP.getFreeHeap());
+  Serial.printf("📦 Free PSRAM before Firebase: %d bytes\n", ESP.getFreePsram());
 
-  // Configure Firebase
+  // Clear and initialize config structure
+  memset(&config, 0, sizeof(FirebaseConfig));
+  memset(&auth, 0, sizeof(FirebaseAuth));
+
+  // Configure Firebase with minimal settings
   config.api_key = API_KEY;
 
-  // Assign the token status callback function
+  // Assign the token status callback function (optional for now)
   config.token_status_callback = cameraTokenCallback;
 
-  // Set timeouts
+  // Set reasonable timeouts
   config.timeout.serverResponse = 10 * 1000;  // 10 seconds
-  config.timeout.socketConnection = 10 * 1000;
+  config.timeout.socketConnection = 10 * 1000;  // 10 seconds
+  config.timeout.rtdbKeepAlive = 45 * 1000;  // 45 seconds
+  config.timeout.rtdbStreamReconnect = 1 * 1000;  // 1 second
+  config.timeout.rtdbStreamError = 3 * 1000;  // 3 seconds
 
-  // Sign up anonymously - this creates a new anonymous user automatically
-  Serial.println("📝 Creating anonymous Firebase user...");
+  // Disable SSL certificate verification to save memory
+  config.cert.data = NULL;
+  config.cert.file = NULL;
 
-  // Initialize Firebase first
+  Serial.println("📝 Starting Firebase initialization...");
+  Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+
+  // Initialize Firebase with error handling
+  Serial.println("🔧 Calling Firebase.begin()...");
+
+  // CRITICAL: This is where it crashes - adding delay and memory check
+  delay(100);  // Let system stabilize
+
+  // Disable watchdog temporarily during Firebase init (can take time)
+  disableCore0WDT();
+  disableCore1WDT();
+
   Firebase.begin(&config, &auth);
+
+  Serial.println("✅ Firebase.begin() completed");
+
+  // Re-enable watchdog
+  enableCore0WDT();
+  enableCore1WDT();
+
   Firebase.reconnectWiFi(true);
 
   // Try to sign up anonymously (this will create a new user)
