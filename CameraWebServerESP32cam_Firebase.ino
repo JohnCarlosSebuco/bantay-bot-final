@@ -496,6 +496,16 @@ void rotateHead(int targetDegrees) {
 // ===========================
 
 void setupCamera() {
+  // CRITICAL: Check and initialize PSRAM before camera setup
+  // ESP32-CAM has 4MB PSRAM that MUST be used for camera frame buffers
+  bool psramFound = psramInit();
+  if (psramFound) {
+    Serial.printf("✅ PSRAM initialized: %d bytes available\n", ESP.getPsramSize());
+    Serial.printf("💾 Free PSRAM: %d bytes\n", ESP.getFreePsram());
+  } else {
+    Serial.println("⚠️  WARNING: PSRAM not found! Camera may not work properly.");
+  }
+
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -518,19 +528,36 @@ void setupCamera() {
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
-  // Frame size and quality
-  config.frame_size = FRAMESIZE_QVGA; // 320x240 for detection
-  config.jpeg_quality = 12;
-  config.fb_count = 2;
+  // Frame size and quality - optimized based on PSRAM availability
+  if (psramFound) {
+    // With PSRAM: Use better quality and 2 frame buffers
+    config.frame_size = FRAMESIZE_QVGA; // 320x240
+    config.jpeg_quality = 10;  // Better quality (lower number = better)
+    config.fb_count = 2;       // 2 buffers for smooth streaming
+    config.fb_location = CAMERA_FB_IN_PSRAM;  // CRITICAL: Use PSRAM for frame buffers!
+    Serial.println("📷 Camera config: QVGA, quality 10, 2 buffers in PSRAM");
+  } else {
+    // Without PSRAM: Use minimal settings
+    config.frame_size = FRAMESIZE_QVGA; // Still QVGA but...
+    config.jpeg_quality = 15;  // Lower quality to reduce memory
+    config.fb_count = 1;       // Only 1 buffer
+    config.fb_location = CAMERA_FB_IN_DRAM;  // Use internal RAM (risky!)
+    Serial.println("⚠️  Camera config: QVGA, quality 15, 1 buffer in DRAM (limited)");
+  }
 
   // Camera init
+  Serial.println("🔧 Initializing camera...");
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
     Serial.printf("❌ Camera init failed with error 0x%x\n", err);
+    Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+    Serial.printf("📦 Free PSRAM: %d bytes\n", ESP.getFreePsram());
     return;
   }
 
-  Serial.println("✅ Camera initialized");
+  Serial.println("✅ Camera initialized successfully!");
+  Serial.printf("💾 Remaining heap: %d bytes\n", ESP.getFreeHeap());
+  Serial.printf("📦 Remaining PSRAM: %d bytes\n", ESP.getFreePsram());
 }
 
 void startCameraServer() {
