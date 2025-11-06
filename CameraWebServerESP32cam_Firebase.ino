@@ -37,10 +37,11 @@ const char *password = "16yaad0a";
 // Device IDs (must match React Native app)
 #define CAMERA_DEVICE_ID "camera_001"
 
-// Firebase objects
-FirebaseData fbdo;
-FirebaseAuth auth;
-FirebaseConfig config;
+// Firebase objects - DYNAMIC ALLOCATION to avoid exceeding ~94KB global static limit
+// ESP32 can only allocate ~94KB globally; Firebase objects are very large
+FirebaseData *fbdo = nullptr;
+FirebaseAuth *auth = nullptr;
+FirebaseConfig *config = nullptr;
 
 bool firebaseConnected = false;
 unsigned long lastFirebaseUpdate = 0;
@@ -132,26 +133,41 @@ void initializeFirebase() {
   Serial.printf("💾 Free heap before Firebase: %d bytes\n", ESP.getFreeHeap());
   Serial.printf("📦 Free PSRAM before Firebase: %d bytes\n", ESP.getFreePsram());
 
-  // Clear and initialize config structure
-  memset(&config, 0, sizeof(FirebaseConfig));
-  memset(&auth, 0, sizeof(FirebaseAuth));
+  // CRITICAL FIX: Allocate Firebase objects on HEAP instead of global static allocation
+  // ESP32 has ~94KB limit for global variables but ~152KB+ available on heap
+  Serial.println("📦 Allocating Firebase objects on heap...");
+
+  fbdo = new FirebaseData();
+  auth = new FirebaseAuth();
+  config = new FirebaseConfig();
+
+  // Check if allocation succeeded
+  if (!fbdo || !auth || !config) {
+    Serial.println("❌ Failed to allocate Firebase objects on heap!");
+    Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+    firebaseConnected = false;
+    return;
+  }
+
+  Serial.println("✅ Firebase objects allocated successfully");
+  Serial.printf("💾 Free heap after allocation: %d bytes\n", ESP.getFreeHeap());
 
   // Configure Firebase with minimal settings
-  config.api_key = API_KEY;
+  config->api_key = API_KEY;
 
   // Assign the token status callback function (optional for now)
-  config.token_status_callback = cameraTokenCallback;
+  config->token_status_callback = cameraTokenCallback;
 
   // Set reasonable timeouts
-  config.timeout.serverResponse = 10 * 1000;  // 10 seconds
-  config.timeout.socketConnection = 10 * 1000;  // 10 seconds
-  config.timeout.rtdbKeepAlive = 45 * 1000;  // 45 seconds
-  config.timeout.rtdbStreamReconnect = 1 * 1000;  // 1 second
-  config.timeout.rtdbStreamError = 3 * 1000;  // 3 seconds
+  config->timeout.serverResponse = 10 * 1000;  // 10 seconds
+  config->timeout.socketConnection = 10 * 1000;  // 10 seconds
+  config->timeout.rtdbKeepAlive = 45 * 1000;  // 45 seconds
+  config->timeout.rtdbStreamReconnect = 1 * 1000;  // 1 second
+  config->timeout.rtdbStreamError = 3 * 1000;  // 3 seconds
 
   // Disable SSL certificate verification to save memory
-  config.cert.data = NULL;
-  config.cert.file = NULL;
+  config->cert.data = NULL;
+  config->cert.file = NULL;
 
   Serial.println("📝 Starting Firebase initialization...");
   Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
@@ -159,14 +175,14 @@ void initializeFirebase() {
   // Initialize Firebase with error handling
   Serial.println("🔧 Calling Firebase.begin()...");
 
-  // CRITICAL: This is where it crashes - adding delay and memory check
-  delay(100);  // Let system stabilize
+  // Let system stabilize
+  delay(100);
 
   // Disable watchdog temporarily during Firebase init (can take time)
   disableCore0WDT();
   disableCore1WDT();
 
-  Firebase.begin(&config, &auth);
+  Firebase.begin(config, auth);  // Pass pointers directly (not &config, &auth)
 
   Serial.println("✅ Firebase.begin() completed");
 
@@ -178,10 +194,10 @@ void initializeFirebase() {
 
   // Try to sign up anonymously (this will create a new user)
   Serial.println("🔐 Signing up anonymously...");
-  if (Firebase.signUp(&config, &auth, "", "")) {
+  if (Firebase.signUp(config, auth, "", "")) {  // Pass pointers directly
     Serial.println("✅ Anonymous sign up successful!");
   } else {
-    Serial.printf("⚠️ Sign up returned: %s\n", config.signer.signupError.message.c_str());
+    Serial.printf("⚠️ Sign up returned: %s\n", config->signer.signupError.message.c_str());
   }
 
   // Wait for Firebase to be ready with better error reporting
@@ -203,18 +219,18 @@ void initializeFirebase() {
   if (Firebase.ready()) {
     firebaseConnected = true;
     Serial.println("\n✅ Firebase connected successfully!");
-    Serial.printf("📧 User ID: %s\n", auth.token.uid.c_str());
+    Serial.printf("📧 User ID: %s\n", auth->token.uid.c_str());
     updateCameraDeviceStatus();
   } else {
     firebaseConnected = false;
     Serial.println("\n❌ Firebase connection failed, using HTTP fallback");
-    Serial.printf("💡 Error: %s\n", config.signer.signupError.message.c_str());
+    Serial.printf("💡 Error: %s\n", config->signer.signupError.message.c_str());
     Serial.println("💡 Make sure Anonymous Authentication is enabled in Firebase Console");
   }
 }
 
 void updateCameraDeviceStatus() {
-  if (!firebaseConnected) return;
+  if (!firebaseConnected || !fbdo) return;
 
   FirebaseJson json;
   // Firestore requires fields to be formatted with type information
@@ -229,15 +245,15 @@ void updateCameraDeviceStatus() {
 
   String path = "devices/" + String(CAMERA_DEVICE_ID);
 
-  if (Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", path.c_str(), json.raw(), "")) {
+  if (Firebase.Firestore.patchDocument(fbdo, FIREBASE_PROJECT_ID, "", path.c_str(), json.raw(), "")) {
     Serial.println("✅ Camera device status updated");
   } else {
-    Serial.println("❌ Failed to update camera device status: " + fbdo.errorReason());
+    Serial.println("❌ Failed to update camera device status: " + fbdo->errorReason());
   }
 }
 
 void reportBirdDetection(int birdSize, int confidence) {
-  if (!firebaseConnected) return;
+  if (!firebaseConnected || !fbdo) return;
 
   FirebaseJson json;
   // Firestore requires fields to be formatted with type information
@@ -252,23 +268,23 @@ void reportBirdDetection(int birdSize, int confidence) {
 
   String path = "detection_history";
 
-  if (Firebase.Firestore.createDocument(&fbdo, FIREBASE_PROJECT_ID, "", path.c_str(), json.raw())) {
+  if (Firebase.Firestore.createDocument(fbdo, FIREBASE_PROJECT_ID, "", path.c_str(), json.raw())) {
     Serial.println("🐦 Bird detection reported to Firebase");
     birdsDetectedToday++;
   } else {
-    Serial.println("❌ Failed to report bird detection: " + fbdo.errorReason());
+    Serial.println("❌ Failed to report bird detection: " + fbdo->errorReason());
   }
 }
 
 void checkFirebaseCommands() {
-  if (!firebaseConnected) return;
+  if (!firebaseConnected || !fbdo) return;
 
   String path = "commands/" + String(CAMERA_DEVICE_ID) + "/pending";
 
   // listDocuments requires all 9 parameters: projectId, databaseId, collectionId, pageSize, pageToken, orderBy, mask, showMissing
-  if (Firebase.Firestore.listDocuments(&fbdo, FIREBASE_PROJECT_ID, "", path.c_str(), 100, "", "", "", false)) {
+  if (Firebase.Firestore.listDocuments(fbdo, FIREBASE_PROJECT_ID, "", path.c_str(), 100, "", "", "", false)) {
     FirebaseJsonArray arr;
-    arr.setJsonArrayData(fbdo.payload().c_str());
+    arr.setJsonArrayData(fbdo->payload().c_str());
 
     for (size_t i = 0; i < arr.size(); i++) {
       FirebaseJsonData result;
@@ -289,7 +305,7 @@ void checkFirebaseCommands() {
         // Delete processed command
         String commandId = extractDocumentId(result.stringValue);
         String deletePath = path + "/" + commandId;
-        Firebase.Firestore.deleteDocument(&fbdo, FIREBASE_PROJECT_ID, "", deletePath.c_str());
+        Firebase.Firestore.deleteDocument(fbdo, FIREBASE_PROJECT_ID, "", deletePath.c_str());
       }
     }
   }
@@ -452,7 +468,7 @@ void triggerAlarmSequence() {
   Serial.println("🚨 TRIGGERING ALARM SEQUENCE!");
 
   // Send command to main board via Firebase
-  if (firebaseConnected) {
+  if (firebaseConnected && fbdo) {
     FirebaseJson json;
     json.set("action", "trigger_alarm");
     json.set("source", "camera_detection");
@@ -461,7 +477,7 @@ void triggerAlarmSequence() {
 
     String path = "commands/main_001/pending";
 
-    if (Firebase.Firestore.createDocument(&fbdo, FIREBASE_PROJECT_ID, "", path.c_str(), json.raw())) {
+    if (Firebase.Firestore.createDocument(fbdo, FIREBASE_PROJECT_ID, "", path.c_str(), json.raw())) {
       Serial.println("📡 Alarm command sent to main board via Firebase");
     }
   }
