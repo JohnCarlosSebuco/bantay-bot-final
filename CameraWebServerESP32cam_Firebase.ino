@@ -496,14 +496,22 @@ void rotateHead(int targetDegrees) {
 // ===========================
 
 void setupCamera() {
-  // CRITICAL: Check and initialize PSRAM before camera setup
+  // CRITICAL: Check PSRAM status (should already be initialized by ESP32 framework)
   // ESP32-CAM has 4MB PSRAM that MUST be used for camera frame buffers
-  bool psramFound = psramInit();
-  if (psramFound) {
-    Serial.printf("✅ PSRAM initialized: %d bytes available\n", ESP.getPsramSize());
-    Serial.printf("💾 Free PSRAM: %d bytes\n", ESP.getFreePsram());
-  } else {
-    Serial.println("⚠️  WARNING: PSRAM not found! Camera may not work properly.");
+  Serial.println("🔍 Checking PSRAM status:");
+  Serial.printf("📦 PSRAM size: %d bytes\n", ESP.getPsramSize());
+  Serial.printf("📦 Free PSRAM: %d bytes\n", ESP.getFreePsram());
+
+  bool psramFound = (ESP.getPsramSize() > 0);
+  if (!psramFound) {
+    Serial.println("❌ ERROR: PSRAM not available!");
+    Serial.println("💡 Solution: In Arduino IDE, go to Tools → PSRAM → Enabled");
+    return;
+  }
+
+  if (ESP.getFreePsram() == 0) {
+    Serial.println("⚠️  WARNING: PSRAM shows 0 bytes free! This may cause issues.");
+    Serial.println("💡 Possible cause: Partition scheme or library consuming PSRAM");
   }
 
   camera_config_t config;
@@ -545,19 +553,50 @@ void setupCamera() {
     Serial.println("⚠️  Camera config: QVGA, quality 15, 1 buffer in DRAM (limited)");
   }
 
-  // Camera init
+  // Add I2C timeout configuration to prevent hang
+  config.sccb_i2c_port = 0;  // I2C port number
+
+  // Camera init with error handling
   Serial.println("🔧 Initializing camera...");
+  Serial.println("📌 Checking camera hardware connection...");
+
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
     Serial.printf("❌ Camera init failed with error 0x%x\n", err);
+
+    // Detailed error messages
+    if (err == ESP_ERR_NOT_FOUND) {
+      Serial.println("💡 Error: Camera sensor not found on I2C bus");
+      Serial.println("   - Check camera module is properly connected");
+      Serial.println("   - Verify camera power supply");
+      Serial.println("   - Check I2C pins (GPIO 26/27)");
+    } else if (err == ESP_ERR_TIMEOUT) {
+      Serial.println("💡 Error: Camera I2C timeout");
+      Serial.println("   - Camera module may be faulty");
+      Serial.println("   - Check I2C pull-up resistors");
+    } else {
+      Serial.printf("💡 Error code: 0x%x - Unknown camera error\n", err);
+    }
+
     Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
     Serial.printf("📦 Free PSRAM: %d bytes\n", ESP.getFreePsram());
+    Serial.println("⚠️  System will continue without camera");
     return;
   }
 
   Serial.println("✅ Camera initialized successfully!");
   Serial.printf("💾 Remaining heap: %d bytes\n", ESP.getFreeHeap());
   Serial.printf("📦 Remaining PSRAM: %d bytes\n", ESP.getFreePsram());
+
+  // Test camera by taking a frame
+  Serial.println("📸 Testing camera capture...");
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (fb) {
+    Serial.printf("✅ Camera test successful! Frame size: %d bytes\n", fb->len);
+    esp_camera_fb_return(fb);
+  } else {
+    Serial.println("⚠️  Camera test failed - could not capture frame");
+  }
 }
 
 void startCameraServer() {
@@ -585,7 +624,14 @@ void startCameraServer() {
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);  // Wait for serial to stabilize
   Serial.println("📷 BantayBot Camera with Firebase - Starting...");
+
+  // Print initial memory status BEFORE anything
+  Serial.println("🔍 Initial memory status:");
+  Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+  Serial.printf("📦 PSRAM size: %d bytes\n", ESP.getPsramSize());
+  Serial.printf("📦 Free PSRAM: %d bytes\n", ESP.getFreePsram());
 
   // Initialize pins - MINIMAL setup for camera board only
   // pinMode(SPEAKER_PIN, OUTPUT);  // DISABLED - on Main Board
