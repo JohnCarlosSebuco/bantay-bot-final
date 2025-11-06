@@ -13,10 +13,10 @@
 // #include <AccelStepper.h>  // NOT NEEDED on camera board - stepper is on main board
 // #include <DHT.h>  // DISABLED - GPIO conflict with camera
 
-// Firebase includes
+// Firebase includes - MINIMAL to save memory
 #include <Firebase_ESP_Client.h>
 #include <addons/TokenHelper.h>
-#include <addons/RTDBHelper.h>
+// #include <addons/RTDBHelper.h>  // Not using Realtime Database - only Firestore
 
 // Camera model configuration
 #include "board_config.h"
@@ -536,22 +536,16 @@ void setupCamera() {
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
-  // Frame size and quality - optimized based on PSRAM availability
-  if (psramFound) {
-    // With PSRAM: Use better quality and 2 frame buffers
-    config.frame_size = FRAMESIZE_QVGA; // 320x240
-    config.jpeg_quality = 10;  // Better quality (lower number = better)
-    config.fb_count = 2;       // 2 buffers for smooth streaming
-    config.fb_location = CAMERA_FB_IN_PSRAM;  // CRITICAL: Use PSRAM for frame buffers!
-    Serial.println("📷 Camera config: QVGA, quality 10, 2 buffers in PSRAM");
-  } else {
-    // Without PSRAM: Use minimal settings
-    config.frame_size = FRAMESIZE_QVGA; // Still QVGA but...
-    config.jpeg_quality = 15;  // Lower quality to reduce memory
-    config.fb_count = 1;       // Only 1 buffer
-    config.fb_location = CAMERA_FB_IN_DRAM;  // Use internal RAM (risky!)
-    Serial.println("⚠️  Camera config: QVGA, quality 15, 1 buffer in DRAM (limited)");
-  }
+  // Frame size and quality - Use DRAM instead of PSRAM
+  // REASON: WiFi library consumes all PSRAM, causing camera allocation to fail
+  config.frame_size = FRAMESIZE_QVGA; // 320x240
+  config.jpeg_quality = 12;  // Balanced quality
+  config.fb_count = 1;       // Only 1 buffer to save RAM
+  config.fb_location = CAMERA_FB_IN_DRAM;  // Use internal RAM (more reliable)
+  config.grab_mode = CAMERA_GRAB_LATEST;   // Always get latest frame
+
+  Serial.println("📷 Camera config: QVGA, quality 12, 1 buffer in DRAM");
+  Serial.println("💡 Using DRAM because WiFi library reserves PSRAM");
 
   // Add I2C timeout configuration to prevent hang
   config.sccb_i2c_port = 0;  // I2C port number
