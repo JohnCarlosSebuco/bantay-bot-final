@@ -24,8 +24,8 @@
 // ===========================
 // WiFi Credentials
 // ===========================
-const char *ssid = "vivo Y16";
-const char *password = "00001111";
+const char *ssid = "HUAWEI-E5330-6AB9";
+const char *password = "16yaad0a";
 
 // ===========================
 // Firebase Configuration
