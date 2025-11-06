@@ -6,10 +6,11 @@
 
 #include "esp_camera.h"
 #include <WiFi.h>
-#include <ESPAsyncWebServer.h>
-#include <AsyncWebSocket.h>
+// MEMORY OPTIMIZATION: Removed heavy libraries to prevent crash
+// #include <ESPAsyncWebServer.h>  // TOO HEAVY for ESP32-CAM
+// #include <AsyncWebSocket.h>     // TOO HEAVY for ESP32-CAM
 #include <ArduinoJson.h>
-#include <AccelStepper.h>
+// #include <AccelStepper.h>  // NOT NEEDED on camera board - stepper is on main board
 // #include <DHT.h>  // DISABLED - GPIO conflict with camera
 
 // Firebase includes
@@ -50,13 +51,13 @@ const unsigned long COMMAND_CHECK_INTERVAL = 1000;    // 1 second
 // ===========================
 // Pin Definitions
 // ===========================
-// Stepper Motor (NEMA 17) - Using available GPIO pins
-#define STEPPER_STEP_PIN 13   // GPIO13
-#define STEPPER_DIR_PIN 15    // GPIO15
-#define STEPPER_ENABLE_PIN 14 // GPIO14
+// STEPPER MOTOR DISABLED - should be on Main Board, not Camera
+// #define STEPPER_STEP_PIN 13   // GPIO13
+// #define STEPPER_DIR_PIN 15    // GPIO15
+// #define STEPPER_ENABLE_PIN 14 // GPIO14
 
-// Horn Speaker - Via Relay or Transistor
-#define SPEAKER_PIN 12        // GPIO12
+// SPEAKER DISABLED - should be on Main Board, not Camera
+// #define SPEAKER_PIN 12        // GPIO12
 
 // Sensors
 // WARNING: ESP32-CAM has limited GPIO pins. GPIO 2 conflicts with camera!
@@ -69,13 +70,13 @@ const unsigned long COMMAND_CHECK_INTERVAL = 1000;    // 1 second
 // #define DHT_TYPE DHT22
 // DHT dht(DHT_PIN, DHT_TYPE);
 
-// Stepper Motor Setup
-#define STEPS_PER_REVOLUTION 3200  // 200 * 16 (microstepping)
-AccelStepper stepper(AccelStepper::DRIVER, STEPPER_STEP_PIN, STEPPER_DIR_PIN);
+// Stepper Motor - DISABLED (on Main Board)
+// #define STEPS_PER_REVOLUTION 3200  // 200 * 16 (microstepping)
+// AccelStepper stepper(AccelStepper::DRIVER, STEPPER_STEP_PIN, STEPPER_DIR_PIN);
 
-// WebSocket Server
-AsyncWebServer server(80);
-AsyncWebSocket ws("/ws");
+// WebSocket Server - DISABLED (too heavy for ESP32-CAM memory)
+// AsyncWebServer server(80);
+// AsyncWebSocket ws("/ws");
 
 // System State
 int currentHeadPosition = 0;  // Current head angle in degrees
@@ -595,22 +596,23 @@ void setup() {
   Serial.begin(115200);
   Serial.println("📷 BantayBot Camera with Firebase - Starting...");
 
-  // Initialize pins
-  pinMode(SPEAKER_PIN, OUTPUT);
+  // Initialize pins - MINIMAL setup for camera board only
+  // pinMode(SPEAKER_PIN, OUTPUT);  // DISABLED - on Main Board
   pinMode(MOTION_SENSOR_PIN, INPUT);
-  digitalWrite(SPEAKER_PIN, LOW);
+  // digitalWrite(SPEAKER_PIN, LOW);  // DISABLED - on Main Board
 
   // Initialize sensors - DHT disabled due to GPIO conflict with camera
   // dht.begin();  // DISABLED - GPIO 2 conflicts with camera
 
-  // Setup stepper motor
-  setupStepper();
+  // Setup stepper motor - DISABLED (on Main Board)
+  // setupStepper();  // DISABLED - causes memory issues
 
   // Setup camera
   setupCamera();
 
-  // Setup bird detection
-  setupBirdDetection();
+  // Setup bird detection - TEMPORARILY DISABLED to save ~150KB RAM
+  // setupBirdDetection();  // Re-enable when memory optimized
+  Serial.println("⚠️  Bird detection disabled to save memory");
 
   // Connect to WiFi
   WiFi.begin(ssid, password);
@@ -622,15 +624,21 @@ void setup() {
   Serial.println("\n✅ WiFi connected!");
   Serial.println("📍 IP address: " + WiFi.localIP().toString());
 
+  // Print memory status
+  Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+  Serial.printf("📦 Free PSRAM: %d bytes\n", ESP.getFreePsram());
+
   // Initialize Firebase
   initializeFirebase();
 
-  // Start camera server
-  startCameraServer();
+  // Start camera server - DISABLED (AsyncWebServer removed to save memory)
+  // startCameraServer();  // DISABLED - using Firebase only
+  Serial.println("⚠️  HTTP server disabled - using Firebase only");
 
   Serial.println("🚀 BantayBot Camera with Firebase ready!");
   Serial.println("🔥 Firebase mode: " + String(firebaseConnected ? "ENABLED" : "DISABLED (HTTP fallback)"));
-  Serial.println("📷 Camera stream: http://" + WiFi.localIP().toString() + "/stream");
+  Serial.printf("💾 Final free heap: %d bytes\n", ESP.getFreeHeap());
+  // Serial.println("📷 Camera stream: http://" + WiFi.localIP().toString() + "/stream");  // DISABLED
 }
 
 void loop() {
