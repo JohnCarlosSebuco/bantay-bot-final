@@ -10,7 +10,7 @@
 #include <AsyncWebSocket.h>
 #include <ArduinoJson.h>
 #include <AccelStepper.h>
-#include <DHT.h>
+// #include <DHT.h>  // DISABLED - GPIO conflict with camera
 
 // Firebase includes
 #include <Firebase_ESP_Client.h>
@@ -59,13 +59,15 @@ const unsigned long COMMAND_CHECK_INTERVAL = 1000;    // 1 second
 #define SPEAKER_PIN 12        // GPIO12
 
 // Sensors
-#define DHT_PIN 2             // GPIO2 for DHT22
-#define SOIL_MOISTURE_PIN 33  // Analog pin for soil moisture
+// WARNING: ESP32-CAM has limited GPIO pins. GPIO 2 conflicts with camera!
+// DHT sensor disabled to avoid conflicts with camera pins
+// #define DHT_PIN 2             // GPIO2 - CONFLICTS WITH CAMERA!
+#define SOIL_MOISTURE_PIN 33  // Analog pin for soil moisture (if needed)
 #define MOTION_SENSOR_PIN 16  // GPIO16 for PIR/motion
 
-// DHT Sensor
-#define DHT_TYPE DHT22
-DHT dht(DHT_PIN, DHT_TYPE);
+// DHT Sensor - DISABLED due to GPIO conflict
+// #define DHT_TYPE DHT22
+// DHT dht(DHT_PIN, DHT_TYPE);
 
 // Stepper Motor Setup
 #define STEPS_PER_REVOLUTION 3200  // 200 * 16 (microstepping)
@@ -445,22 +447,25 @@ void triggerAlarmSequence() {
 // ===========================
 
 void readSensors() {
-  // Read DHT22 sensor
-  temperature = dht.readTemperature();
-  humidity = dht.readHumidity();
+  // DHT22 sensor DISABLED due to GPIO conflict with camera
+  // temperature = dht.readTemperature();
+  // humidity = dht.readHumidity();
+  temperature = 0.0;  // DHT disabled
+  humidity = 0.0;     // DHT disabled
 
-  // Read soil moisture (analog)
+  // Read soil moisture (analog) - optional, may not be connected
   soilMoisture = analogRead(SOIL_MOISTURE_PIN);
   soilMoisture = map(soilMoisture, 0, 4095, 0, 100); // Convert to percentage
 
   // Read motion sensor
   motionDetected = digitalRead(MOTION_SENSOR_PIN);
 
-  if (isnan(temperature) || isnan(humidity)) {
-    Serial.println("❌ Failed to read from DHT sensor!");
-    temperature = 0.0;
-    humidity = 0.0;
-  }
+  // DHT sensor disabled - no error checking needed
+  // if (isnan(temperature) || isnan(humidity)) {
+  //   Serial.println("❌ Failed to read from DHT sensor!");
+  //   temperature = 0.0;
+  //   humidity = 0.0;
+  // }
 }
 
 // ===========================
@@ -595,8 +600,8 @@ void setup() {
   pinMode(MOTION_SENSOR_PIN, INPUT);
   digitalWrite(SPEAKER_PIN, LOW);
 
-  // Initialize sensors
-  dht.begin();
+  // Initialize sensors - DHT disabled due to GPIO conflict with camera
+  // dht.begin();  // DISABLED - GPIO 2 conflicts with camera
 
   // Setup stepper motor
   setupStepper();
