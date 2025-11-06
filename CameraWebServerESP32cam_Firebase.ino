@@ -437,10 +437,10 @@ void triggerAlarmSequence() {
     }
   }
 
-  // Also trigger local speaker if connected
-  digitalWrite(SPEAKER_PIN, HIGH);
-  delay(500);
-  digitalWrite(SPEAKER_PIN, LOW);
+  // SPEAKER DISABLED - on Main Board
+  // digitalWrite(SPEAKER_PIN, HIGH);
+  // delay(500);
+  // digitalWrite(SPEAKER_PIN, LOW);
 }
 
 // ===========================
@@ -474,26 +474,21 @@ void readSensors() {
 // ===========================
 
 void setupStepper() {
-  pinMode(STEPPER_ENABLE_PIN, OUTPUT);
-  digitalWrite(STEPPER_ENABLE_PIN, LOW); // Enable stepper
-
-  stepper.setMaxSpeed(1000);
-  stepper.setAcceleration(500);
-  stepper.setCurrentPosition(0);
-
-  Serial.println("✅ Stepper motor initialized");
+  // STEPPER DISABLED - on Main Board
+  // pinMode(STEPPER_ENABLE_PIN, OUTPUT);
+  // digitalWrite(STEPPER_ENABLE_PIN, LOW);
+  // stepper.setMaxSpeed(1000);
+  // stepper.setAcceleration(500);
+  // stepper.setCurrentPosition(0);
+  // Serial.println("✅ Stepper motor initialized");
 }
 
 void rotateHead(int targetDegrees) {
-  // Convert degrees to steps
-  long targetSteps = (long)targetDegrees * STEPS_PER_REVOLUTION / 360;
-
-  Serial.printf("🔄 Rotating head to %d degrees (%ld steps)\n", targetDegrees, targetSteps);
-
-  stepper.moveTo(targetSteps);
-  currentHeadPosition = targetDegrees;
-
-  // Motor will move in main loop via stepper.run()
+  // STEPPER DISABLED - on Main Board
+  // long targetSteps = (long)targetDegrees * STEPS_PER_REVOLUTION / 360;
+  // Serial.printf("🔄 Rotating head to %d degrees (%ld steps)\n", targetDegrees, targetSteps);
+  // stepper.moveTo(targetSteps);
+  // currentHeadPosition = targetDegrees;
 }
 
 // ===========================
@@ -539,53 +534,22 @@ void setupCamera() {
 }
 
 void startCameraServer() {
-  // Stream endpoint
+  // ASYNC WEB SERVER DISABLED - using Firebase only to save memory
+  // AsyncWebServer removed to prevent ESP32-CAM memory crash
+  Serial.println("⚠️  HTTP server disabled - use Firebase for remote access");
+
+  /* DISABLED CODE - AsyncWebServer removed
   server.on("/stream", HTTP_GET, [](AsyncWebServerRequest *request) {
-    AsyncWebServerResponse *response = request->beginChunkedResponse(
-      "multipart/x-mixed-replace; boundary=frame",
-      [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
-        camera_fb_t *fb = esp_camera_fb_get();
-        if (!fb) return 0;
-
-        size_t len = 0;
-        if (index == 0) {
-          len = snprintf((char*)buffer, maxLen,
-            "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
-            fb->len);
-        }
-
-        if (len < maxLen) {
-          size_t copyLen = min(fb->len - (index - len), maxLen - len);
-          memcpy(buffer + len, fb->buf + (index - len), copyLen);
-          len += copyLen;
-        }
-
-        esp_camera_fb_return(fb);
-        return len;
-      }
-    );
-    request->send(response);
+    // Camera stream endpoint
   });
 
-  // Status endpoint
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-    DynamicJsonDocument doc(1024);
-    doc["temperature"] = temperature;
-    doc["humidity"] = humidity;
-    doc["soilMoisture"] = soilMoisture;
-    doc["motionDetected"] = motionDetected;
-    doc["headPosition"] = currentHeadPosition;
-    doc["detectionEnabled"] = birdDetectionEnabled;
-    doc["birdsDetectedToday"] = birdsDetectedToday;
-    doc["firebaseMode"] = firebaseConnected;
-
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
+    // Status endpoint
   });
 
   server.begin();
   Serial.println("🌐 Camera server started");
+  */
 }
 
 // ===========================
@@ -653,8 +617,8 @@ void loop() {
   // Perform bird detection
   detectBirdMotion();
 
-  // Handle stepper motor movements
-  stepper.run();
+  // Handle stepper motor movements - DISABLED (on Main Board)
+  // stepper.run();
 
   // Firebase operations
   if (firebaseConnected) {
