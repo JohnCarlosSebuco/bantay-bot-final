@@ -152,22 +152,37 @@ void initializeFirebase() {
   Serial.println("✅ Firebase objects allocated successfully");
   Serial.printf("💾 Free heap after allocation: %d bytes\n", ESP.getFreeHeap());
 
+  // Debug: Print pointer addresses to verify they're valid
+  Serial.printf("🔍 fbdo address: 0x%08X\n", (uint32_t)fbdo);
+  Serial.printf("🔍 auth address: 0x%08X\n", (uint32_t)auth);
+  Serial.printf("🔍 config address: 0x%08X\n", (uint32_t)config);
+
+  Serial.println("🔧 Configuring Firebase API key...");
+  delay(10);  // Small delay to ensure serial output
+
   // Configure Firebase with minimal settings
   config->api_key = API_KEY;
+  Serial.println("✅ API key configured");
 
+  Serial.println("🔧 Setting token callback...");
   // Assign the token status callback function (optional for now)
   config->token_status_callback = cameraTokenCallback;
+  Serial.println("✅ Token callback set");
 
+  Serial.println("🔧 Setting timeouts...");
   // Set reasonable timeouts
   config->timeout.serverResponse = 10 * 1000;  // 10 seconds
   config->timeout.socketConnection = 10 * 1000;  // 10 seconds
   config->timeout.rtdbKeepAlive = 45 * 1000;  // 45 seconds
   config->timeout.rtdbStreamReconnect = 1 * 1000;  // 1 second
   config->timeout.rtdbStreamError = 3 * 1000;  // 3 seconds
+  Serial.println("✅ Timeouts configured");
 
+  Serial.println("🔧 Disabling SSL cert...");
   // Disable SSL certificate verification to save memory
   config->cert.data = NULL;
   config->cert.file = NULL;
+  Serial.println("✅ SSL cert disabled");
 
   Serial.println("📝 Starting Firebase initialization...");
   Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
