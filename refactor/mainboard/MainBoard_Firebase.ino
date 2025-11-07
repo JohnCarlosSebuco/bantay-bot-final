@@ -49,6 +49,7 @@ FirebaseConfig fbConfig;
 bool firebaseConnected = false;
 unsigned long lastFirebaseUpdate = 0;
 unsigned long lastCommandCheck = 0;
+const unsigned long COMMAND_CHECK_INTERVAL = 2000;  // 2 seconds
 
 // ===========================
 // System State
@@ -554,6 +555,69 @@ void setup() {
   Serial.printf("💾 Final free heap: %d bytes\n", ESP.getFreeHeap());
 }
 
+// ===========================
+// Firebase Command Polling
+// ===========================
+
+void checkFirebaseCommands() {
+  if (!firebaseConnected) return;
+  if (millis() - lastCommandCheck < COMMAND_CHECK_INTERVAL) return;
+
+  lastCommandCheck = millis();
+
+  String path = "commands/main_001/pending";
+
+  if (Firebase.Firestore.listDocuments(&fbdo, FIREBASE_PROJECT_ID, "", path.c_str())) {
+    // Get first pending command
+    FirebaseJsonArray arr;
+    fbdo.get(arr);
+
+    if (arr.size() > 0) {
+      FirebaseJson item;
+      arr.get(item, 0);
+
+      String action;
+      item.get(action, "action");
+
+      Serial.println("📥 Received command: " + action);
+
+      // Execute command
+      if (action == "play_audio") {
+        int track;
+        item.get(track, "params/track");
+        playAudio(track);
+      }
+      else if (action == "set_volume") {
+        int volume;
+        item.get(volume, "params/volume");
+        setVolume(volume);
+      }
+      else if (action == "oscillate_arms") {
+        startServoOscillation();
+      }
+      else if (action == "rotate_head") {
+        int angle;
+        item.get(angle, "params/angle");
+        rotateHead(angle);
+      }
+      else if (action == "trigger_alarm") {
+        triggerAlarmSequence();
+      }
+
+      // Mark as completed
+      String docId;
+      item.get(docId, "id");
+      String completePath = path + "/" + docId;
+
+      FirebaseJson updateDoc;
+      updateDoc.set("fields/status/stringValue", "completed");
+      updateDoc.set("fields/completed_at/timestampValue", "now");
+
+      Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", completePath.c_str(), updateDoc.raw());
+    }
+  }
+}
+
 void loop() {
   unsigned long currentTime = millis();
 
@@ -575,6 +639,9 @@ void loop() {
 
   // Firebase operations
   if (firebaseConnected) {
+    // NEW: Check for Firebase commands
+    checkFirebaseCommands();
+
     // Update device status
     if (currentTime - lastFirebaseUpdate >= FIREBASE_UPDATE_INTERVAL) {
       updateDeviceStatus();

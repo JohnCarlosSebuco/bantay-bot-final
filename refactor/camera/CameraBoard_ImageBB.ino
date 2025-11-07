@@ -15,6 +15,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <base64.h>
+#include <ESPAsyncWebServer.h>
 #include "board_config.h"
 
 // ===========================
@@ -50,6 +51,11 @@ int birdsDetectedToday = 0;
 unsigned long lastDetectionTime = 0;
 const unsigned long DETECTION_COOLDOWN = 10000;  // 10 second cooldown
 
+// Streaming configuration
+bool streamingEnabled = true;
+unsigned long streamInterval = 5000;  // 5 seconds
+unsigned long lastStreamUpload = 0;
+
 // Frame Buffer for Motion Detection
 camera_fb_t *currentFrame = NULL;  // Temporary frame buffer (returned immediately after use)
 uint8_t *prevGrayBuffer = NULL;    // Previous frame grayscale data for comparison
@@ -66,6 +72,9 @@ int detectionZoneRight = 320;
 int cameraResolution = FRAMESIZE_QVGA;  // Default QVGA for detection
 int cameraBrightness = 0;   // -2 to 2
 int cameraContrast = 0;     // -2 to 2
+
+// HTTP Server
+AsyncWebServer server(80);  // Camera on port 80
 
 // ===========================
 // Camera Functions
@@ -263,6 +272,7 @@ bool notifyMainBoard(String imageUrl, int birdSize, int confidence) {
   doc["confidence"] = confidence;
   doc["detectionZone"] = String(detectionZoneLeft) + "," + String(detectionZoneTop) + "," +
                          String(detectionZoneRight) + "," + String(detectionZoneBottom);
+  doc["detected"] = (birdSize > 0);  // True if bird, false if stream update
 
   String jsonString;
   serializeJson(doc, jsonString);
@@ -403,6 +413,20 @@ bool detectBirdMotion() {
 }
 
 // ===========================
+// Camera Settings Application
+// ===========================
+
+void applyCameraSettings() {
+  sensor_t *s = esp_camera_sensor_get();
+  if (s) {
+    s->set_brightness(s, cameraBrightness);
+    s->set_contrast(s, cameraContrast);
+    s->set_framesize(s, (framesize_t)cameraResolution);
+    Serial.println("✅ Camera settings applied");
+  }
+}
+
+// ===========================
 // Setup and Main Loop
 // ===========================
 
@@ -433,6 +457,47 @@ void setup() {
   Serial.println("\n✅ WiFi connected!");
   Serial.println("📍 IP address: " + WiFi.localIP().toString());
 
+  // HTTP endpoint for settings changes
+  server.on("/settings", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+      Serial.println("📡 Received settings update");
+
+      DynamicJsonDocument doc(512);
+      DeserializationError error = deserializeJson(doc, data, len);
+
+      if (error) {
+        Serial.println("❌ JSON parsing failed");
+        request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+        return;
+      }
+
+      // Apply settings
+      if (doc.containsKey("brightness")) {
+        cameraBrightness = doc["brightness"];
+        Serial.printf("🔆 Brightness: %d\n", cameraBrightness);
+      }
+      if (doc.containsKey("contrast")) {
+        cameraContrast = doc["contrast"];
+        Serial.printf("🎨 Contrast: %d\n", cameraContrast);
+      }
+      if (doc.containsKey("streamInterval")) {
+        streamInterval = doc["streamInterval"];
+        Serial.printf("⏱️  Stream interval: %d ms\n", streamInterval);
+      }
+      if (doc.containsKey("streamingEnabled")) {
+        streamingEnabled = doc["streamingEnabled"];
+        Serial.printf("📹 Streaming: %s\n", streamingEnabled ? "ON" : "OFF");
+      }
+
+      applyCameraSettings();
+
+      request->send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Settings applied\"}");
+    }
+  );
+
+  server.begin();
+  Serial.println("🌐 HTTP server started on port 80");
+
   // Print final memory status
   Serial.printf("💾 Final free heap: %d bytes\n", ESP.getFreeHeap());
   Serial.printf("📦 Final free PSRAM: %d bytes\n", ESP.getFreePsram());
@@ -442,9 +507,40 @@ void setup() {
   Serial.println("🔗 Main Board: http://" + String(MAIN_BOARD_IP) + ":" + String(MAIN_BOARD_PORT));
 }
 
+// ===========================
+// Streaming Functions
+// ===========================
+
+void uploadStreamUpdate() {
+  if (!streamingEnabled) return;
+
+  Serial.println("📸 Capturing stream frame...");
+
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("❌ Stream capture failed");
+    return;
+  }
+
+  String imageUrl = uploadToImageBB(fb);
+  esp_camera_fb_return(fb);
+
+  if (imageUrl.length() > 0) {
+    Serial.println("✅ Stream frame uploaded");
+    // Optionally notify main board with "detected: false"
+    notifyMainBoard(imageUrl, 0, 0);  // 0 size, 0 confidence = stream update
+  }
+}
+
 void loop() {
-  // Perform bird detection
+  // Existing bird detection
   detectBirdMotion();
+
+  // NEW: Periodic stream upload
+  if (millis() - lastStreamUpload >= streamInterval) {
+    uploadStreamUpdate();
+    lastStreamUpload = millis();
+  }
 
   // Small delay to prevent overwhelming the system
   delay(100);
