@@ -204,8 +204,11 @@ String uploadToImageBB(camera_fb_t *fb) {
   Serial.printf("📊 Encoded size: %d bytes\n", encodedImage.length());
 
   // Prepare HTTP POST
+  Serial.printf("💾 Free heap before HTTP: %d bytes\n", ESP.getFreeHeap());
+
   HTTPClient http;
   http.begin(IMGBB_UPLOAD_URL);
+  http.setInsecure();  // Skip certificate verification (ImageBB uses HTTPS)
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   http.setTimeout(15000);  // 15 second timeout
 
@@ -214,7 +217,9 @@ String uploadToImageBB(camera_fb_t *fb) {
 
   // Send POST request
   Serial.println("🌐 Sending to ImageBB...");
+  Serial.printf("📡 POST data size: %d bytes\n", postData.length());
   int httpResponseCode = http.POST(postData);
+  Serial.printf("📊 Response code: %d\n", httpResponseCode);
 
   // Free JPEG buffer if we allocated it
   if (fb->format == PIXFORMAT_GRAYSCALE && jpg_buf) {
@@ -462,6 +467,20 @@ void setup() {
   }
   Serial.println("\n✅ WiFi connected!");
   Serial.println("📍 IP address: " + WiFi.localIP().toString());
+
+  // Test internet connectivity
+  Serial.println("🌐 Testing internet connectivity...");
+  HTTPClient http;
+  http.begin("http://www.google.com");  // Simple HTTP test (not HTTPS)
+  http.setTimeout(5000);
+  int testCode = http.GET();
+  http.end();
+  if (testCode > 0) {
+    Serial.printf("✅ Internet accessible (HTTP %d)\n", testCode);
+  } else {
+    Serial.printf("⚠️  Internet test failed (code: %d) - uploads may not work\n", testCode);
+    Serial.println("💡 Check if router has internet access");
+  }
 
   // HTTP endpoint for settings changes
   server.on("/settings", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
