@@ -133,6 +133,27 @@ void setupCamera() {
 // ImageBB Upload Functions
 // ===========================
 
+String urlEncode(String str) {
+  String encoded = "";
+  char c;
+  char code0;
+  char code1;
+
+  for (int i = 0; i < str.length(); i++) {
+    c = str.charAt(i);
+    if (c == '+') {
+      encoded += "%2B";
+    } else if (c == '/') {
+      encoded += "%2F";
+    } else if (c == '=') {
+      encoded += "%3D";
+    } else {
+      encoded += c;
+    }
+  }
+  return encoded;
+}
+
 String uploadToImageBB(camera_fb_t *fb) {
   if (!fb) {
     Serial.println("❌ No frame buffer to upload");
@@ -148,7 +169,7 @@ String uploadToImageBB(camera_fb_t *fb) {
 
   if (fb->format == PIXFORMAT_GRAYSCALE) {
     Serial.println("🔧 Converting grayscale to JPEG...");
-    bool converted = frame2jpg(fb, 80, &jpg_buf, &jpg_len);  // 80% quality
+    bool converted = frame2jpg(fb, 60, &jpg_buf, &jpg_len);  // 60% quality (optimized for size)
 
     if (!converted || !jpg_buf) {
       Serial.println("❌ Failed to convert grayscale to JPEG");
@@ -165,14 +186,20 @@ String uploadToImageBB(camera_fb_t *fb) {
   String base64Image = base64::encode(jpg_buf, jpg_len);
   Serial.printf("📊 Base64 size: %d bytes\n", base64Image.length());
 
+  // URL encode the base64 string (critical for ImageBB API)
+  // Converts +, /, = characters to %2B, %2F, %3D to prevent corruption
+  Serial.println("🔧 URL encoding base64 string...");
+  String encodedImage = urlEncode(base64Image);
+  Serial.printf("📊 Encoded size: %d bytes\n", encodedImage.length());
+
   // Prepare HTTP POST
   HTTPClient http;
   http.begin(IMGBB_UPLOAD_URL);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   http.setTimeout(15000);  // 15 second timeout
 
-  // Build POST data
-  String postData = "key=" + String(IMGBB_API_KEY) + "&image=" + base64Image;
+  // Build POST data with URL-encoded image
+  String postData = "key=" + String(IMGBB_API_KEY) + "&image=" + encodedImage;
 
   // Send POST request
   Serial.println("🌐 Sending to ImageBB...");
