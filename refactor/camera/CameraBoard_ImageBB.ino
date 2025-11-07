@@ -26,7 +26,7 @@ const char *WIFI_PASSWORD = "16yaad0a";
 // ===========================
 // ImageBB Configuration
 // ===========================
-const char *IMGBB_API_KEY = "YOUR_IMGBB_API_KEY_HERE";  // Get free API key from https://api.imgbb.com/
+const char *IMGBB_API_KEY = "20460a2ad6db9bb546648b430930c94a";  // Get free API key from https://api.imgbb.com/
 const char *IMGBB_UPLOAD_URL = "https://api.imgbb.com/1/upload";
 
 // ===========================
