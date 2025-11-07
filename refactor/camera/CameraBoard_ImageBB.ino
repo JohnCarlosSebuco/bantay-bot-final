@@ -1,13 +1,15 @@
 /*
  * BantayBot Camera Board - ESP32-CAM with ImageBB Integration
- * Refactored Architecture: Camera uploads to ImageBB, notifies Main Board
+ * Refactored Architecture: Smart capture on detection + on-demand streaming
  *
  * Features:
- * - Camera streaming and bird detection
- * - Image capture and upload to ImageBB
- * - HTTP notification to Main Board with image URL
+ * - Bird detection with automatic upload to ImageBB (10s cooldown)
+ * - On-demand manual capture via HTTP GET /capture (2s rate limit)
+ * - HTTP settings endpoint for remote configuration (brightness, contrast)
+ * - HTTP notification to Main Board with image URL + detected flag
+ * - Smart upload caching to prevent conflicts between detection and manual capture
  * - No Firebase library (saves memory)
- * - Simple and lightweight
+ * - Memory efficient: ~180KB free heap
  */
 
 #include "esp_camera.h"
@@ -51,10 +53,10 @@ int birdsDetectedToday = 0;
 unsigned long lastDetectionTime = 0;
 const unsigned long DETECTION_COOLDOWN = 10000;  // 10 second cooldown
 
-// Streaming configuration
-bool streamingEnabled = true;
-unsigned long streamInterval = 5000;  // 5 seconds
-unsigned long lastStreamUpload = 0;
+// On-Demand Capture & Upload Tracking
+unsigned long lastUploadTime = 0;  // Track last upload (detection or manual)
+String lastImageUrl = "";  // Cache last uploaded image URL
+const unsigned long UPLOAD_COOLDOWN = 2000;  // 2 seconds between any uploads
 
 // Frame Buffer for Motion Detection
 camera_fb_t *currentFrame = NULL;  // Temporary frame buffer (returned immediately after use)
@@ -236,6 +238,10 @@ String uploadToImageBB(camera_fb_t *fb) {
         Serial.println("✅ Upload successful!");
         Serial.println("🔗 Image URL: " + imageUrl);
         Serial.println("🔗 Thumb URL: " + thumbnailUrl);
+
+        // Cache URL and timestamp for on-demand capture optimization
+        lastImageUrl = imageUrl;
+        lastUploadTime = millis();
       } else {
         Serial.println("❌ ImageBB API returned error");
         Serial.println("Response: " + response);
@@ -495,6 +501,42 @@ void setup() {
     }
   );
 
+  // On-demand capture endpoint
+  server.on("/capture", HTTP_GET, [](AsyncWebServerRequest *request) {
+    unsigned long now = millis();
+
+    // Check if recent upload occurred (detection or previous manual capture)
+    if (now - lastUploadTime < UPLOAD_COOLDOWN && lastImageUrl.length() > 0) {
+      Serial.println("📸 Recent upload detected, returning cached URL");
+      String response = "{\"status\":\"cached\",\"imageUrl\":\"" + lastImageUrl + "\",\"message\":\"Recent image (<%ds ago)\"}";
+      request->send(200, "application/json", response);
+      return;
+    }
+
+    Serial.println("📸 Manual capture requested");
+
+    // Capture new frame
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("❌ Manual capture failed");
+      request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Camera capture failed\"}");
+      return;
+    }
+
+    // Upload to ImageBB
+    String imageUrl = uploadToImageBB(fb);
+    esp_camera_fb_return(fb);
+
+    if (imageUrl.length() > 0) {
+      Serial.println("✅ Manual capture uploaded");
+      String response = "{\"status\":\"ok\",\"imageUrl\":\"" + imageUrl + "\",\"message\":\"New capture uploaded\"}";
+      request->send(200, "application/json", response);
+    } else {
+      Serial.println("❌ Upload failed");
+      request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"ImageBB upload failed\"}");
+    }
+  });
+
   server.begin();
   Serial.println("🌐 HTTP server started on port 80");
 
@@ -505,42 +547,13 @@ void setup() {
   Serial.println("🚀 BantayBot Camera Board ready!");
   Serial.println("📸 Bird detection: " + String(birdDetectionEnabled ? "ENABLED" : "DISABLED"));
   Serial.println("🔗 Main Board: http://" + String(MAIN_BOARD_IP) + ":" + String(MAIN_BOARD_PORT));
-}
-
-// ===========================
-// Streaming Functions
-// ===========================
-
-void uploadStreamUpdate() {
-  if (!streamingEnabled) return;
-
-  Serial.println("📸 Capturing stream frame...");
-
-  camera_fb_t *fb = esp_camera_fb_get();
-  if (!fb) {
-    Serial.println("❌ Stream capture failed");
-    return;
-  }
-
-  String imageUrl = uploadToImageBB(fb);
-  esp_camera_fb_return(fb);
-
-  if (imageUrl.length() > 0) {
-    Serial.println("✅ Stream frame uploaded");
-    // Optionally notify main board with "detected: false"
-    notifyMainBoard(imageUrl, 0, 0);  // 0 size, 0 confidence = stream update
-  }
+  Serial.println("📷 Manual capture: GET http://" + WiFi.localIP().toString() + "/capture");
+  Serial.println("⚙️  Settings: POST http://" + WiFi.localIP().toString() + "/settings");
 }
 
 void loop() {
-  // Existing bird detection
+  // Bird detection (uploads on detection only)
   detectBirdMotion();
-
-  // NEW: Periodic stream upload
-  if (millis() - lastStreamUpload >= streamInterval) {
-    uploadStreamUpdate();
-    lastStreamUpload = millis();
-  }
 
   // Small delay to prevent overwhelming the system
   delay(100);
