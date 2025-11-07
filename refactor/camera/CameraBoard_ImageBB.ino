@@ -228,8 +228,19 @@ String uploadToImageBB(camera_fb_t *fb) {
   String imageUrl = "";
 
   if (httpResponseCode > 0) {
-    String response = http.getString();
     Serial.printf("📥 HTTP Response code: %d\n", httpResponseCode);
+
+    // Handle 301 redirect (HTTP -> HTTPS)
+    if (httpResponseCode == 301 || httpResponseCode == 302) {
+      String location = http.getLocation();
+      Serial.println("🔀 Redirect to: " + location);
+      Serial.println("⚠️  ImageBB redirects HTTP to HTTPS - HTTPS not supported on ESP32-CAM due to memory");
+
+      http.end();
+      return "";
+    }
+
+    String response = http.getString();
 
     // Parse JSON response
     DynamicJsonDocument doc(4096);
@@ -252,6 +263,7 @@ String uploadToImageBB(camera_fb_t *fb) {
       }
     } else {
       Serial.println("❌ JSON parsing failed");
+      Serial.println("Response body: " + response.substring(0, 200));
     }
   } else {
     Serial.printf("❌ HTTP POST failed: %d\n", httpResponseCode);
