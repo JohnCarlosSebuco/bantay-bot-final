@@ -486,14 +486,7 @@ void setup() {
         cameraContrast = doc["contrast"];
         Serial.printf("🎨 Contrast: %d\n", cameraContrast);
       }
-      if (doc.containsKey("streamInterval")) {
-        streamInterval = doc["streamInterval"];
-        Serial.printf("⏱️  Stream interval: %d ms\n", streamInterval);
-      }
-      if (doc.containsKey("streamingEnabled")) {
-        streamingEnabled = doc["streamingEnabled"];
-        Serial.printf("📹 Streaming: %s\n", streamingEnabled ? "ON" : "OFF");
-      }
+      // Note: streamInterval and streamingEnabled removed - using on-demand capture instead
 
       applyCameraSettings();
 
