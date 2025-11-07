@@ -26,7 +26,7 @@ const char *WIFI_PASSWORD = "16yaad0a";
 // ===========================
 // ImageBB Configuration
 // ===========================
-const char *IMGBB_API_KEY = "YOUR_IMGBB_API_KEY_HERE";  // Get free API key from https://api.imgbb.com/
+const char *IMGBB_API_KEY = "3e8d9f103a965f49318d117decbedd77";  // Get free API key from https://api.imgbb.com/
 const char *IMGBB_UPLOAD_URL = "https://api.imgbb.com/1/upload";
 
 // ===========================
@@ -51,11 +51,10 @@ unsigned long lastDetectionTime = 0;
 const unsigned long DETECTION_COOLDOWN = 10000;  // 10 second cooldown
 
 // Frame Buffer for Motion Detection
-camera_fb_t *currentFrame = NULL;
-camera_fb_t *previousFrame = NULL;
-uint8_t *prevGrayBuffer = NULL;
-uint8_t *currGrayBuffer = NULL;
-const int GRAY_BUFFER_SIZE = 320 * 240;  // QVGA resolution
+camera_fb_t *currentFrame = NULL;  // Temporary frame buffer (returned immediately after use)
+uint8_t *prevGrayBuffer = NULL;    // Previous frame grayscale data for comparison
+uint8_t *currGrayBuffer = NULL;    // Current frame grayscale data
+const int GRAY_BUFFER_SIZE = 320 * 240;  // QVGA resolution (320x240 pixels)
 
 // Detection Zone (default: upper 60% of frame)
 int detectionZoneTop = 0;
@@ -97,16 +96,16 @@ void setupCamera() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_JPEG;
+  config.pixel_format = PIXFORMAT_RGB565;  // RGB565 for motion detection (not JPEG)
 
   // Frame size and quality - Use DRAM instead of PSRAM
   config.frame_size = FRAMESIZE_QVGA; // 320x240
-  config.jpeg_quality = 12;  // 10-63, lower = better quality
-  config.fb_count = 1;       // Only 1 buffer
+  config.jpeg_quality = 12;  // Not used for RGB565, but keep for compatibility
+  config.fb_count = 2;       // Increased to 2 buffers for better reliability
   config.fb_location = CAMERA_FB_IN_DRAM;  // Use internal RAM
   config.grab_mode = CAMERA_GRAB_LATEST;
 
-  Serial.println("📷 Camera config: QVGA, quality 12, 1 buffer in DRAM");
+  Serial.println("📷 Camera config: QVGA RGB565, 2 buffers in DRAM");
 
   // Camera init with error handling
   Serial.println("🔧 Initializing camera...");
@@ -254,15 +253,24 @@ void setupBirdDetection() {
 }
 
 void convertToGrayscale(camera_fb_t *fb, uint8_t *grayBuffer) {
-  if (fb->format != PIXFORMAT_JPEG) {
-    // Already in RGB565 or other format, convert to grayscale
+  if (fb->format == PIXFORMAT_RGB565) {
+    // Convert RGB565 to grayscale for motion detection
+    // RGB565: RRRRR GGGGGG BBBBB (16 bits per pixel)
     for (int i = 0; i < fb->len; i += 2) {
+      // Read RGB565 pixel (little endian)
       uint16_t pixel = (fb->buf[i+1] << 8) | fb->buf[i];
-      uint8_t r = (pixel >> 11) << 3;
-      uint8_t g = ((pixel >> 5) & 0x3F) << 2;
-      uint8_t b = (pixel & 0x1F) << 3;
-      grayBuffer[i/2] = (r * 0.299 + g * 0.587 + b * 0.114);
+
+      // Extract RGB components and expand to 8 bits
+      uint8_t r = (pixel >> 11) << 3;        // 5 bits -> 8 bits
+      uint8_t g = ((pixel >> 5) & 0x3F) << 2; // 6 bits -> 8 bits
+      uint8_t b = (pixel & 0x1F) << 3;       // 5 bits -> 8 bits
+
+      // Convert to grayscale using standard weights
+      grayBuffer[i/2] = (uint8_t)(r * 0.299 + g * 0.587 + b * 0.114);
     }
+  } else {
+    // For other formats, log warning
+    Serial.println("⚠️  Unsupported pixel format for motion detection");
   }
 }
 
@@ -280,9 +288,10 @@ bool detectBirdMotion() {
   convertToGrayscale(currentFrame, currGrayBuffer);
 
   bool birdDetected = false;
+  static bool hasFirstFrame = false;
 
-  // If we have a previous frame, perform motion detection
-  if (previousFrame) {
+  // If we have a previous frame buffer (grayscale data), perform motion detection
+  if (hasFirstFrame) {
     int changedPixels = 0;
     int totalPixels = 0;
 
@@ -310,7 +319,7 @@ bool detectBirdMotion() {
         int confidence = map(changedPixels, minBirdSize, maxBirdSize, 50, 95);
         Serial.printf("🐦 BIRD DETECTED! Size: %d pixels, Confidence: %d%%\n", changedPixels, confidence);
 
-        // Upload image to ImageBB
+        // Upload image to ImageBB (uses currentFrame before we return it)
         String imageUrl = uploadToImageBB(currentFrame);
 
         if (imageUrl.length() > 0) {
@@ -325,14 +334,14 @@ bool detectBirdMotion() {
     }
   }
 
-  // Store current frame as previous for next comparison
-  if (previousFrame) {
-    esp_camera_fb_return(previousFrame);
-  }
-  previousFrame = currentFrame;
+  // ✅ CRITICAL FIX: Return frame buffer immediately after use
+  // We only need the grayscale data in currGrayBuffer, not the frame buffer itself
+  esp_camera_fb_return(currentFrame);
+  currentFrame = NULL;
 
-  // Copy current gray buffer to previous
+  // Copy current gray buffer to previous for next iteration comparison
   memcpy(prevGrayBuffer, currGrayBuffer, GRAY_BUFFER_SIZE);
+  hasFirstFrame = true;  // Mark that we now have data in prevGrayBuffer
 
   return birdDetected;
 }
