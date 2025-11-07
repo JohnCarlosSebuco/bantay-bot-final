@@ -140,16 +140,36 @@ String uploadToImageBB(camera_fb_t *fb) {
   }
 
   Serial.println("📤 Uploading image to ImageBB...");
-  Serial.printf("📊 Image size: %d bytes\n", fb->len);
+  Serial.printf("📊 Raw image size: %d bytes (format: %d)\n", fb->len, fb->format);
 
-  // Convert image to base64
-  String base64Image = base64::encode(fb->buf, fb->len);
+  // Convert grayscale frame to JPEG for ImageBB
+  uint8_t *jpg_buf = NULL;
+  size_t jpg_len = 0;
+
+  if (fb->format == PIXFORMAT_GRAYSCALE) {
+    Serial.println("🔧 Converting grayscale to JPEG...");
+    bool converted = frame2jpg(fb, 80, &jpg_buf, &jpg_len);  // 80% quality
+
+    if (!converted || !jpg_buf) {
+      Serial.println("❌ Failed to convert grayscale to JPEG");
+      return "";
+    }
+    Serial.printf("✅ JPEG conversion successful: %d bytes\n", jpg_len);
+  } else {
+    // Already in JPEG or other format, use as-is
+    jpg_buf = fb->buf;
+    jpg_len = fb->len;
+  }
+
+  // Convert JPEG to base64
+  String base64Image = base64::encode(jpg_buf, jpg_len);
   Serial.printf("📊 Base64 size: %d bytes\n", base64Image.length());
 
   // Prepare HTTP POST
   HTTPClient http;
   http.begin(IMGBB_UPLOAD_URL);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  http.setTimeout(15000);  // 15 second timeout
 
   // Build POST data
   String postData = "key=" + String(IMGBB_API_KEY) + "&image=" + base64Image;
@@ -157,6 +177,11 @@ String uploadToImageBB(camera_fb_t *fb) {
   // Send POST request
   Serial.println("🌐 Sending to ImageBB...");
   int httpResponseCode = http.POST(postData);
+
+  // Free JPEG buffer if we allocated it
+  if (fb->format == PIXFORMAT_GRAYSCALE && jpg_buf) {
+    free(jpg_buf);
+  }
 
   String imageUrl = "";
 
@@ -177,6 +202,7 @@ String uploadToImageBB(camera_fb_t *fb) {
         Serial.println("🔗 Thumb URL: " + thumbnailUrl);
       } else {
         Serial.println("❌ ImageBB API returned error");
+        Serial.println("Response: " + response);
       }
     } else {
       Serial.println("❌ JSON parsing failed");
