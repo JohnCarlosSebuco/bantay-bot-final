@@ -96,16 +96,16 @@ void setupCamera() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_RGB565;  // RGB565 for motion detection (not JPEG)
+  config.pixel_format = PIXFORMAT_GRAYSCALE;  // Grayscale for motion detection (1 byte/pixel)
 
   // Frame size and quality - Use DRAM instead of PSRAM
   config.frame_size = FRAMESIZE_QVGA; // 320x240
-  config.jpeg_quality = 12;  // Not used for RGB565, but keep for compatibility
-  config.fb_count = 2;       // Increased to 2 buffers for better reliability
+  config.jpeg_quality = 12;  // Not used for grayscale, but keep for compatibility
+  config.fb_count = 2;       // 2 buffers (grayscale is small: 76,800 bytes each)
   config.fb_location = CAMERA_FB_IN_DRAM;  // Use internal RAM
   config.grab_mode = CAMERA_GRAB_LATEST;
 
-  Serial.println("📷 Camera config: QVGA RGB565, 2 buffers in DRAM");
+  Serial.println("📷 Camera config: QVGA Grayscale, 2 buffers in DRAM");
 
   // Camera init with error handling
   Serial.println("🔧 Initializing camera...");
@@ -253,7 +253,10 @@ void setupBirdDetection() {
 }
 
 void convertToGrayscale(camera_fb_t *fb, uint8_t *grayBuffer) {
-  if (fb->format == PIXFORMAT_RGB565) {
+  if (fb->format == PIXFORMAT_GRAYSCALE) {
+    // Already grayscale! Just copy directly (1 byte per pixel)
+    memcpy(grayBuffer, fb->buf, fb->len);
+  } else if (fb->format == PIXFORMAT_RGB565) {
     // Convert RGB565 to grayscale for motion detection
     // RGB565: RRRRR GGGGGG BBBBB (16 bits per pixel)
     for (int i = 0; i < fb->len; i += 2) {
