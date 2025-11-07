@@ -14,6 +14,7 @@
 
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <base64.h>
@@ -206,9 +207,11 @@ String uploadToImageBB(camera_fb_t *fb) {
   // Prepare HTTP POST
   Serial.printf("💾 Free heap before HTTP: %d bytes\n", ESP.getFreeHeap());
 
+  WiFiClientSecure client;
+  client.setInsecure();  // Skip certificate verification for ImageBB HTTPS
+
   HTTPClient http;
-  http.begin(IMGBB_UPLOAD_URL);
-  http.setInsecure();  // Skip certificate verification (ImageBB uses HTTPS)
+  http.begin(client, IMGBB_UPLOAD_URL);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   http.setTimeout(15000);  // 15 second timeout
 
