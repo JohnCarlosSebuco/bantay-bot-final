@@ -14,7 +14,6 @@
 
 #include "esp_camera.h"
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <base64.h>
@@ -31,7 +30,7 @@ const char *WIFI_PASSWORD = "16yaad0a";
 // ImageBB Configuration
 // ===========================
 const char *IMGBB_API_KEY = "3e8d9f103a965f49318d117decbedd77";  // Get free API key from https://api.imgbb.com/
-const char *IMGBB_UPLOAD_URL = "https://api.imgbb.com/1/upload";
+const char *IMGBB_UPLOAD_URL = "http://api.imgbb.com/1/upload";  // Using HTTP to avoid ESP32 TLS memory issues
 
 // ===========================
 // Main Board Configuration
@@ -207,11 +206,8 @@ String uploadToImageBB(camera_fb_t *fb) {
   // Prepare HTTP POST
   Serial.printf("💾 Free heap before HTTP: %d bytes\n", ESP.getFreeHeap());
 
-  WiFiClientSecure client;
-  client.setInsecure();  // Skip certificate verification for ImageBB HTTPS
-
   HTTPClient http;
-  http.begin(client, IMGBB_UPLOAD_URL);
+  http.begin(IMGBB_UPLOAD_URL);  // Plain HTTP to avoid TLS memory issues
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   http.setTimeout(15000);  // 15 second timeout
 
