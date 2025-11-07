@@ -165,22 +165,22 @@ String urlEncode(String str) {
   return encoded;
 }
 
-String uploadToImageBB(camera_fb_t *fb) {
+String uploadViaMainBoard(camera_fb_t *fb) {
   if (!fb) {
     Serial.println("❌ No frame buffer to upload");
     return "";
   }
 
-  Serial.println("📤 Uploading image to ImageBB...");
+  Serial.println("📤 Uploading image via Main Board proxy...");
   Serial.printf("📊 Raw image size: %d bytes (format: %d)\n", fb->len, fb->format);
 
-  // Convert grayscale frame to JPEG for ImageBB
+  // Convert grayscale frame to JPEG
   uint8_t *jpg_buf = NULL;
   size_t jpg_len = 0;
 
   if (fb->format == PIXFORMAT_GRAYSCALE) {
     Serial.println("🔧 Converting grayscale to JPEG...");
-    bool converted = frame2jpg(fb, 60, &jpg_buf, &jpg_len);  // 60% quality (optimized for size)
+    bool converted = frame2jpg(fb, 60, &jpg_buf, &jpg_len);  // 60% quality
 
     if (!converted || !jpg_buf) {
       Serial.println("❌ Failed to convert grayscale to JPEG");
@@ -188,7 +188,6 @@ String uploadToImageBB(camera_fb_t *fb) {
     }
     Serial.printf("✅ JPEG conversion successful: %d bytes\n", jpg_len);
   } else {
-    // Already in JPEG or other format, use as-is
     jpg_buf = fb->buf;
     jpg_len = fb->len;
   }
@@ -197,76 +196,63 @@ String uploadToImageBB(camera_fb_t *fb) {
   String base64Image = base64::encode(jpg_buf, jpg_len);
   Serial.printf("📊 Base64 size: %d bytes\n", base64Image.length());
 
-  // URL encode the base64 string (critical for ImageBB API)
-  // Converts +, /, = characters to %2B, %2F, %3D to prevent corruption
-  Serial.println("🔧 URL encoding base64 string...");
-  String encodedImage = urlEncode(base64Image);
-  Serial.printf("📊 Encoded size: %d bytes\n", encodedImage.length());
+  // Build JSON payload for Main Board
+  DynamicJsonDocument doc(base64Image.length() + 256);
+  doc["deviceId"] = "camera_001";
+  doc["imageData"] = base64Image;
+  doc["format"] = "jpeg";
 
-  // Prepare HTTP POST
-  Serial.printf("💾 Free heap before HTTP: %d bytes\n", ESP.getFreeHeap());
-
-  HTTPClient http;
-  http.begin(IMGBB_UPLOAD_URL);  // Plain HTTP to avoid TLS memory issues
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  http.setTimeout(15000);  // 15 second timeout
-
-  // Build POST data with URL-encoded image
-  String postData = "key=" + String(IMGBB_API_KEY) + "&image=" + encodedImage;
-
-  // Send POST request
-  Serial.println("🌐 Sending to ImageBB...");
-  Serial.printf("📡 POST data size: %d bytes\n", postData.length());
-  int httpResponseCode = http.POST(postData);
-  Serial.printf("📊 Response code: %d\n", httpResponseCode);
+  String jsonPayload;
+  serializeJson(doc, jsonPayload);
 
   // Free JPEG buffer if we allocated it
   if (fb->format == PIXFORMAT_GRAYSCALE && jpg_buf) {
     free(jpg_buf);
   }
 
+  // Send to Main Board
+  Serial.printf("💾 Free heap before HTTP: %d bytes\n", ESP.getFreeHeap());
+  Serial.printf("📡 Payload size: %d bytes\n", jsonPayload.length());
+
+  HTTPClient http;
+  String mainBoardUrl = "http://" + String(MAIN_BOARD_IP) + ":" + String(MAIN_BOARD_PORT) + "/upload-image";
+  http.begin(mainBoardUrl);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(20000);  // 20 second timeout (Main Board needs time to upload to ImageBB)
+
+  Serial.println("🌐 Sending to Main Board...");
+  int httpResponseCode = http.POST(jsonPayload);
+  Serial.printf("📊 Response code: %d\n", httpResponseCode);
+
   String imageUrl = "";
 
-  if (httpResponseCode > 0) {
-    Serial.printf("📥 HTTP Response code: %d\n", httpResponseCode);
-
-    // Handle 301 redirect (HTTP -> HTTPS)
-    if (httpResponseCode == 301 || httpResponseCode == 302) {
-      String location = http.getLocation();
-      Serial.println("🔀 Redirect to: " + location);
-      Serial.println("⚠️  ImageBB redirects HTTP to HTTPS - HTTPS not supported on ESP32-CAM due to memory");
-
-      http.end();
-      return "";
-    }
-
+  if (httpResponseCode == 200) {
     String response = http.getString();
+    Serial.println("📥 Main Board response received");
 
-    // Parse JSON response
-    DynamicJsonDocument doc(4096);
-    DeserializationError error = deserializeJson(doc, response);
+    // Parse JSON response from Main Board
+    DynamicJsonDocument responseDoc(1024);
+    DeserializationError error = deserializeJson(responseDoc, response);
 
     if (!error) {
-      if (doc["success"].as<bool>()) {
-        imageUrl = doc["data"]["url"].as<String>();
-        String thumbnailUrl = doc["data"]["thumb"]["url"].as<String>();
+      if (responseDoc["status"] == "ok") {
+        imageUrl = responseDoc["imageUrl"].as<String>();
         Serial.println("✅ Upload successful!");
         Serial.println("🔗 Image URL: " + imageUrl);
-        Serial.println("🔗 Thumb URL: " + thumbnailUrl);
 
-        // Cache URL and timestamp for on-demand capture optimization
+        // Cache URL and timestamp
         lastImageUrl = imageUrl;
         lastUploadTime = millis();
       } else {
-        Serial.println("❌ ImageBB API returned error");
-        Serial.println("Response: " + response);
+        String errorMsg = responseDoc["message"] | "Unknown error";
+        Serial.println("❌ Main Board upload failed: " + errorMsg);
       }
     } else {
       Serial.println("❌ JSON parsing failed");
-      Serial.println("Response body: " + response.substring(0, 200));
+      Serial.println("Response: " + response.substring(0, 200));
     }
   } else {
-    Serial.printf("❌ HTTP POST failed: %d\n", httpResponseCode);
+    Serial.printf("❌ Main Board request failed: %d\n", httpResponseCode);
   }
 
   http.end();
@@ -408,7 +394,7 @@ bool detectBirdMotion() {
         Serial.printf("🐦 BIRD DETECTED! Size: %d pixels, Confidence: %d%%\n", changedPixels, confidence);
 
         // Upload image to ImageBB (uses currentFrame before we return it)
-        String imageUrl = uploadToImageBB(currentFrame);
+        String imageUrl = uploadViaMainBoard(currentFrame);
 
         if (imageUrl.length() > 0) {
           // Notify main board with image URL
@@ -546,8 +532,8 @@ void setup() {
       return;
     }
 
-    // Upload to ImageBB
-    String imageUrl = uploadToImageBB(fb);
+    // Upload via Main Board proxy
+    String imageUrl = uploadViaMainBoard(fb);
     esp_camera_fb_return(fb);
 
     if (imageUrl.length() > 0) {
@@ -556,7 +542,7 @@ void setup() {
       request->send(200, "application/json", response);
     } else {
       Serial.println("❌ Upload failed");
-      request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"ImageBB upload failed\"}");
+      request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Upload failed via Main Board proxy\"}");
     }
   });
 

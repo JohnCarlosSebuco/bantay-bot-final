@@ -14,6 +14,8 @@
  */
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <AccelStepper.h>
@@ -21,6 +23,7 @@
 #include "DFRobotDFPlayerMini.h"
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
+#include <base64.h>
 
 // Firebase includes
 #include <Firebase_ESP_Client.h>
@@ -50,6 +53,12 @@ bool firebaseConnected = false;
 unsigned long lastFirebaseUpdate = 0;
 unsigned long lastCommandCheck = 0;
 const unsigned long COMMAND_CHECK_INTERVAL = 2000;  // 2 seconds
+
+// ===========================
+// ImageBB Configuration (for Camera proxy)
+// ===========================
+const char *IMGBB_API_KEY = "3e8d9f103a965f49318d117decbedd77";
+const char *IMGBB_UPLOAD_URL = "https://api.imgbb.com/1/upload";
 
 // ===========================
 // System State
@@ -373,6 +382,88 @@ void triggerAlarmSequence() {
 }
 
 // ===========================
+// ImageBB Upload Functions (Camera Proxy)
+// ===========================
+
+String urlEncode(String str) {
+  String encoded = "";
+  char c;
+
+  for (int i = 0; i < str.length(); i++) {
+    c = str.charAt(i);
+    if (c == '+') {
+      encoded += "%2B";
+    } else if (c == '/') {
+      encoded += "%2F";
+    } else if (c == '=') {
+      encoded += "%3D";
+    } else {
+      encoded += c;
+    }
+  }
+  return encoded;
+}
+
+String uploadToImageBB(String base64Image) {
+  Serial.println("📤 Uploading to ImageBB via HTTPS...");
+  Serial.printf("📊 Base64 size: %d bytes\n", base64Image.length());
+
+  // URL encode the base64 string
+  String encodedImage = urlEncode(base64Image);
+  Serial.printf("📊 Encoded size: %d bytes\n", encodedImage.length());
+
+  // Prepare HTTPS client
+  WiFiClientSecure client;
+  client.setInsecure();  // Skip certificate verification
+
+  HTTPClient http;
+  http.begin(client, IMGBB_UPLOAD_URL);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  http.setTimeout(20000);  // 20 second timeout
+
+  // Build POST data
+  String postData = "key=" + String(IMGBB_API_KEY) + "&image=" + encodedImage;
+  Serial.printf("📡 POST data size: %d bytes\n", postData.length());
+
+  // Send POST request
+  Serial.println("🌐 Sending to ImageBB...");
+  int httpResponseCode = http.POST(postData);
+  Serial.printf("📊 Response code: %d\n", httpResponseCode);
+
+  String imageUrl = "";
+
+  if (httpResponseCode == 200) {
+    String response = http.getString();
+    Serial.println("📥 ImageBB response received");
+
+    // Parse JSON response
+    DynamicJsonDocument doc(4096);
+    DeserializationError error = deserializeJson(doc, response);
+
+    if (!error) {
+      if (doc["success"].as<bool>()) {
+        imageUrl = doc["data"]["url"].as<String>();
+        Serial.println("✅ ImageBB upload successful!");
+        Serial.println("🔗 Image URL: " + imageUrl);
+      } else {
+        Serial.println("❌ ImageBB API error");
+        if (doc.containsKey("error")) {
+          String errorMsg = doc["error"]["message"].as<String>();
+          Serial.println("Error: " + errorMsg);
+        }
+      }
+    } else {
+      Serial.println("❌ JSON parsing failed");
+    }
+  } else {
+    Serial.printf("❌ ImageBB upload failed: %d\n", httpResponseCode);
+  }
+
+  http.end();
+  return imageUrl;
+}
+
+// ===========================
 // HTTP Endpoints
 // ===========================
 
@@ -410,6 +501,51 @@ void setupHTTPEndpoints() {
 
       // Respond to camera
       request->send(200, "application/json", "{\"status\":\"ok\",\"action\":\"alarm_triggered\"}");
+    }
+  );
+
+  // Image upload proxy endpoint - receives images from camera and uploads to ImageBB
+  server.on("/upload-image", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+      Serial.println("📸 Received image upload request from camera");
+
+      // Parse JSON payload
+      DynamicJsonDocument doc(8192);  // Larger buffer for base64 image data
+      DeserializationError error = deserializeJson(doc, data, len);
+
+      if (error) {
+        Serial.println("❌ JSON parsing failed");
+        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON\"}");
+        return;
+      }
+
+      // Extract image data
+      String deviceId = doc["deviceId"].as<String>();
+      String imageData = doc["imageData"].as<String>();
+      String format = doc["format"].as<String>();
+
+      Serial.printf("📦 Received from %s: %d bytes (%s)\n", deviceId.c_str(), imageData.length(), format.c_str());
+      Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+
+      // Upload to ImageBB
+      String imageUrl = uploadToImageBB(imageData);
+
+      if (imageUrl.length() > 0) {
+        // Success - return image URL to camera
+        DynamicJsonDocument responseDoc(512);
+        responseDoc["status"] = "ok";
+        responseDoc["imageUrl"] = imageUrl;
+
+        String response;
+        serializeJson(responseDoc, response);
+
+        Serial.println("✅ Proxy upload successful, returning URL to camera");
+        request->send(200, "application/json", response);
+      } else {
+        // Failed to upload to ImageBB
+        Serial.println("❌ Proxy upload failed");
+        request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"ImageBB upload failed\"}");
+      }
     }
   );
 
