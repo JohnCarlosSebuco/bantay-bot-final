@@ -101,11 +101,11 @@ void setupCamera() {
   // Frame size and quality - Use DRAM instead of PSRAM
   config.frame_size = FRAMESIZE_QVGA; // 320x240
   config.jpeg_quality = 12;  // Not used for grayscale, but keep for compatibility
-  config.fb_count = 2;       // 2 buffers (grayscale is small: 76,800 bytes each)
+  config.fb_count = 1;       // Only 1 buffer (we return it immediately after use)
   config.fb_location = CAMERA_FB_IN_DRAM;  // Use internal RAM
   config.grab_mode = CAMERA_GRAB_LATEST;
 
-  Serial.println("📷 Camera config: QVGA Grayscale, 2 buffers in DRAM");
+  Serial.println("📷 Camera config: QVGA Grayscale, 1 buffer in DRAM");
 
   // Camera init with error handling
   Serial.println("🔧 Initializing camera...");
