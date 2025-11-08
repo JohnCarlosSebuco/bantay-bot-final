@@ -1,11 +1,42 @@
 export const CONFIG = {
   DEMO_MODE: false,
-  ESP32_IP: '192.168.1.28',
-  ESP32_PORT: 80,
+
+  // Dual ESP32 Setup
+  // Camera ESP32-CAM (port 80)
+  CAMERA_ESP32_IP: '172.24.26.144',   // Camera board's actual IP
+  CAMERA_ESP32_PORT: 80,
+  CAMERA_WEBSOCKET_PATH: '/ws',
+
+  // Main Control Board ESP32 (port 81) - Uses HTTP polling, not WebSocket
+  MAIN_ESP32_IP: '172.24.26.193',     // Main board's actual IP
+  MAIN_ESP32_PORT: 81,
+  MAIN_WEBSOCKET_PATH: '/ws',         // Not used - kept for backward compatibility
+
+  // Legacy single IP (fallback - uses main board)
+  ESP32_IP: '172.24.26.193',          // Main board's actual IP
+  ESP32_PORT: 81,
   WEBSOCKET_PATH: '/ws',
-  UPDATE_INTERVAL: 2000,  // Increased to 2s for RS485 sensor
+
+  UPDATE_INTERVAL: 2000,  // 2s for RS485 sensor
   CONNECTION_TIMEOUT: 5000,
-  RECONNECT_INTERVAL: 3000
+  RECONNECT_INTERVAL: 3000,
+
+  // Audio Configuration
+  TOTAL_AUDIO_TRACKS: 7,
+  SKIP_TRACK: 3,  // Track 3 is skipped
+
+  // Stepper Motor Configuration
+  STEPPER_MIN_ANGLE: -180,
+  STEPPER_MAX_ANGLE: 180,
+  STEPPER_DEFAULT_STEP: 45,
+
+  // Servo Configuration
+  SERVO_OSCILLATION_CYCLES: 6,
+  SERVO_OSCILLATION_INTERVAL: 30,  // milliseconds
+
+  // PIR Motion Configuration
+  MOTION_TIMEOUT: 120000,      // 2 minutes
+  MOTION_COOLDOWN: 30000,      // 30 seconds
 };
 
 export const SENSOR_THRESHOLDS = {

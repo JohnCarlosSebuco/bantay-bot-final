@@ -28,6 +28,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f4705000-111a-4a1c-8e3f-5aa987fd1b81"
+      }
+    },
+    "owner": "julesjules"
   }
 }

@@ -17,6 +17,8 @@ import BirdAnalyticsScreen from './src/screens/BirdAnalyticsScreen';
 import ReportsScreen from './src/screens/ReportsScreen';
 import { LocaleContext, loadLang } from './src/i18n/i18n';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
+import ConfigService from './src/services/ConfigService';
+import FirebaseService from './src/services/FirebaseService';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -42,7 +44,23 @@ function AppContent() {
   const { theme, isDark } = useTheme();
 
   React.useEffect(() => {
-    (async () => setLang(await loadLang()))();
+    (async () => {
+      try {
+        // Initialize ConfigService first
+        await ConfigService.initialize();
+        console.log('✅ ConfigService initialized on app startup');
+
+        // Initialize Firebase services
+        await FirebaseService.initialize();
+        console.log('✅ Firebase services initialized on app startup');
+
+        // Load language
+        setLang(await loadLang());
+      } catch (error) {
+        console.error('❌ Error during app initialization:', error);
+        // App can still work with HTTP fallback if Firebase fails
+      }
+    })();
   }, []);
 
   return (
