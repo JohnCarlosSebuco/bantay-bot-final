@@ -21,6 +21,23 @@ export const CONFIG = {
   CONNECTION_TIMEOUT: 5000,
   RECONNECT_INTERVAL: 3000,
 
+  // Firebase Configuration for Remote Control
+  // NOTE: Replace with your own Firebase project credentials
+  // Get from: Firebase Console > Project Settings > General > Your apps
+  FIREBASE_CONFIG: {
+    apiKey: "YOUR_API_KEY_HERE",
+    authDomain: "your-project.firebaseapp.com",
+    databaseURL: "https://your-project-default-rtdb.firebaseio.com",
+    projectId: "your-project-id",
+    storageBucket: "your-project.appspot.com",
+    messagingSenderId: "123456789",
+    appId: "1:123456789:web:abcdef123456"
+  },
+
+  // Device ID for Firebase pairing (6-character code)
+  // This should match the DEVICE_ID in your ESP32 Arduino code
+  DEVICE_ID: "BANTAY",  // Change this to your unique device code
+
   // Audio Configuration
   TOTAL_AUDIO_TRACKS: 7,
   SKIP_TRACK: 3,  // Track 3 is skipped

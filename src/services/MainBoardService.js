@@ -382,6 +382,33 @@ class MainBoardService {
   getConnectionMode() {
     return this.useFirebase ? 'firebase' : 'http';
   }
+
+  /**
+   * Ping the ESP32 to check if it's reachable on local network
+   * @returns {Promise<boolean>} - True if reachable, false otherwise
+   */
+  async ping() {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);  // 2 second timeout
+
+      const response = await fetch(`${this.baseUrl}/status`, {
+        method: 'GET',
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        console.log('[MainBoardService] ✅ Ping successful - ESP32 reachable');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.log('[MainBoardService] ⚠️  Ping failed - ESP32 not reachable on local network');
+      return false;
+    }
+  }
 }
 
 export default new MainBoardService();

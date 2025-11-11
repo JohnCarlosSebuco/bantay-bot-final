@@ -14,7 +14,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import WebSocketService from '../services/WebSocketService';
+import ConnectionManager from '../services/ConnectionManager';
 import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config/config';
@@ -163,10 +163,21 @@ const DashboardScreen = () => {
       } catch (_) {}
     };
 
-    WebSocketService.on('connected', handleConnection);
-    WebSocketService.on('data', handleData);
-    WebSocketService.on('alert', handleAlert);
-    WebSocketService.connect();
+    // Initialize ConnectionManager (auto-detects local or remote mode)
+    ConnectionManager.initialize();
+
+    // Listen for connection changes
+    ConnectionManager.onConnectionChange((status) => {
+      handleConnection(status.connected);
+    });
+
+    // Listen for status updates (sensor data, alerts)
+    ConnectionManager.onStatusUpdate(handleData);
+    ConnectionManager.onStatusUpdate((data) => {
+      if (data.alert) {
+        handleAlert(data.alert);
+      }
+    });
 
     (async () => {
       try {
@@ -188,10 +199,7 @@ const DashboardScreen = () => {
     setStreamUrl(`http://${esp32Ip}:81/stream`);
 
     return () => {
-      WebSocketService.off('connected', handleConnection);
-      WebSocketService.off('data', handleData);
-      WebSocketService.off('alert', handleAlert);
-      WebSocketService.disconnect();
+      ConnectionManager.disconnect();
       if (soundRef.current) {
         try { soundRef.current.unloadAsync(); } catch (_) {}
         soundRef.current = null;
@@ -208,9 +216,9 @@ const DashboardScreen = () => {
     }, 1000);
   }, []);
 
-  const sendCommand = (command, value = 0) => {
+  const sendCommand = async (command, value = 0) => {
     try {
-      WebSocketService.send({ command, value, timestamp: Date.now() });
+      await ConnectionManager.sendCommand(command, value);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (e) {
       Alert.alert(
@@ -225,8 +233,8 @@ const DashboardScreen = () => {
   const stopAudio = () => sendCommand('STOP_AUDIO');
   const nextTrack = () => sendCommand('NEXT_TRACK');
   const setAudioVolume = (vol) => sendCommand('SET_VOLUME', vol);
-  const setLeftServo = (angle) => WebSocketService.send({ command: 'SET_SERVO_ANGLE', servo: 0, value: angle });
-  const setRightServo = (angle) => WebSocketService.send({ command: 'SET_SERVO_ANGLE', servo: 1, value: angle });
+  const setLeftServo = (angle) => ConnectionManager.sendCommand('SET_SERVO_ANGLE', { servo: 0, value: angle });
+  const setRightServo = (angle) => ConnectionManager.sendCommand('SET_SERVO_ANGLE', { servo: 1, value: angle });
   const toggleOscillation = () => sendCommand('TOGGLE_SERVO_OSCILLATION');
   const rotateLeft = () => sendCommand('ROTATE_HEAD_LEFT', 90);
   const rotateCenter = () => sendCommand('ROTATE_HEAD_CENTER', 0);

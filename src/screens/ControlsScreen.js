@@ -12,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { CONFIG } from '../config/config';
-import WebSocketService from '../services/WebSocketService';
+import ConnectionManager from '../services/ConnectionManager';
 import { LocaleContext } from '../i18n/i18n';
 import { useTheme } from '../theme/ThemeContext';
 
@@ -69,10 +69,8 @@ const ControlsScreen = () => {
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-    const service = WebSocketService;
-
     try {
-      service.send({ command, timestamp: Date.now() });
+      await ConnectionManager.sendCommand(command);
 
       await new Promise(resolve => setTimeout(resolve, 800));
 
