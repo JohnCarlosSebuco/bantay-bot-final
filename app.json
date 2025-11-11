@@ -7,8 +7,10 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "updates": {
-      "enabled": false,
-      "checkAutomatically": "NEVER"
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/f4705000-111a-4a1c-8e3f-5aa987fd1b81"
     },
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -16,7 +18,10 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "runtimeVersion": {
+        "policy": "appVersion"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -24,7 +29,8 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.johncarlos.bantaybot"
+      "package": "com.johncarlos.bantaybot",
+      "runtimeVersion": "1.0.0"
     },
     "web": {
       "favicon": "./assets/favicon.png"

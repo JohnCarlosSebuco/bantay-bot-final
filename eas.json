@@ -7,21 +7,24 @@
     "preview": {
       "android": {
         "buildType": "apk"
-      }
+      },
+      "channel": "preview"
     },
     "preview-gradle": {
       "android": {
         "gradleCommand": ":app:assembleRelease"
-      }
+      },
+      "channel": "preview-gradle"
     },
     "preview-internal": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "preview-internal"
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
-      }
+      },
+      "channel": "production"
     }
   }
 }
-
