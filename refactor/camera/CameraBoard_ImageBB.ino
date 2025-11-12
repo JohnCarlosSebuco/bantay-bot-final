@@ -197,7 +197,7 @@ String uploadViaMainBoard(camera_fb_t *fb) {
 
   if (fb->format == PIXFORMAT_GRAYSCALE) {
     Serial.println("🔧 Converting grayscale to JPEG...");
-    bool converted = frame2jpg(fb, 60, &jpg_buf, &jpg_len);  // 60% quality
+    bool converted = frame2jpg(fb, 40, &jpg_buf, &jpg_len);  // 40% quality (reduced from 60% for smaller payloads)
 
     if (!converted || !jpg_buf) {
       Serial.println("❌ Failed to convert grayscale to JPEG");
@@ -235,7 +235,7 @@ String uploadViaMainBoard(camera_fb_t *fb) {
   String mainBoardUrl = "http://" + String(MAIN_BOARD_IP) + ":" + String(MAIN_BOARD_PORT) + "/upload-image";
   http.begin(mainBoardUrl);
   http.addHeader("Content-Type", "application/json");
-  http.setTimeout(20000);  // 20 second timeout (Main Board needs time to upload to ImageBB)
+  http.setTimeout(40000);  // 40 second timeout (Main Board needs time to process and upload to ImageBB)
 
   Serial.println("🌐 Sending to Main Board...");
   int httpResponseCode = http.POST(jsonPayload);
