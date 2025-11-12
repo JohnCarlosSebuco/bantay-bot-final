@@ -109,6 +109,7 @@ void initializeFirebase() {
 
   // Configure Firebase
   fbConfig.api_key = API_KEY;
+  fbConfig.host = "firestore.googleapis.com";  // Firestore host
   fbConfig.token_status_callback = tokenCallback;
   fbConfig.timeout.serverResponse = 10 * 1000;
   fbConfig.timeout.socketConnection = 10 * 1000;
