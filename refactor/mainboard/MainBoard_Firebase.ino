@@ -59,6 +59,10 @@ unsigned long lastCommandCheck = 0;
 const char *IMGBB_API_KEY = "3e8d9f103a965f49318d117decbedd77";
 const char *IMGBB_UPLOAD_URL = "https://api.imgbb.com/1/upload";
 
+// Buffer for chunked upload data
+String uploadBuffer = "";
+size_t uploadTotalSize = 0;
+
 // ===========================
 // System State
 // ===========================
@@ -507,45 +511,67 @@ void setupHTTPEndpoints() {
   // Image upload proxy endpoint - receives images from camera and uploads to ImageBB
   server.on("/upload-image", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
     [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-      Serial.println("📸 Received image upload request from camera");
-
-      // Parse JSON payload
-      DynamicJsonDocument doc(8192);  // Larger buffer for base64 image data
-      DeserializationError error = deserializeJson(doc, data, len);
-
-      if (error) {
-        Serial.println("❌ JSON parsing failed");
-        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON\"}");
-        return;
+      // Handle chunked data accumulation
+      if (index == 0) {
+        // First chunk - reset buffer
+        uploadBuffer = "";
+        uploadTotalSize = total;
+        Serial.println("📸 Received image upload request from camera");
+        Serial.printf("📦 Total size: %d bytes\n", total);
       }
 
-      // Extract image data
-      String deviceId = doc["deviceId"].as<String>();
-      String imageData = doc["imageData"].as<String>();
-      String format = doc["format"].as<String>();
-
-      Serial.printf("📦 Received from %s: %d bytes (%s)\n", deviceId.c_str(), imageData.length(), format.c_str());
-      Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
-
-      // Upload to ImageBB
-      String imageUrl = uploadToImageBB(imageData);
-
-      if (imageUrl.length() > 0) {
-        // Success - return image URL to camera
-        DynamicJsonDocument responseDoc(512);
-        responseDoc["status"] = "ok";
-        responseDoc["imageUrl"] = imageUrl;
-
-        String response;
-        serializeJson(responseDoc, response);
-
-        Serial.println("✅ Proxy upload successful, returning URL to camera");
-        request->send(200, "application/json", response);
-      } else {
-        // Failed to upload to ImageBB
-        Serial.println("❌ Proxy upload failed");
-        request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"ImageBB upload failed\"}");
+      // Append chunk to buffer
+      for (size_t i = 0; i < len; i++) {
+        uploadBuffer += (char)data[i];
       }
+
+      // Check if this is the last chunk
+      if (index + len == total) {
+        Serial.println("✅ All chunks received, processing...");
+        Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+
+        // Parse complete JSON payload
+        DynamicJsonDocument doc(16384);  // Larger buffer for complete base64 image data
+        DeserializationError error = deserializeJson(doc, uploadBuffer);
+
+        if (error) {
+          Serial.printf("❌ JSON parsing failed: %s\n", error.c_str());
+          request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON\"}");
+          uploadBuffer = "";  // Clear buffer
+          return;
+        }
+
+        // Extract image data
+        String deviceId = doc["deviceId"].as<String>();
+        String imageData = doc["imageData"].as<String>();
+        String format = doc["format"].as<String>();
+
+        Serial.printf("📦 Received from %s: %d bytes (%s)\n", deviceId.c_str(), imageData.length(), format.c_str());
+
+        // Upload to ImageBB
+        String imageUrl = uploadToImageBB(imageData);
+
+        // Clear buffer
+        uploadBuffer = "";
+
+        if (imageUrl.length() > 0) {
+          // Success - return image URL to camera
+          DynamicJsonDocument responseDoc(512);
+          responseDoc["status"] = "ok";
+          responseDoc["imageUrl"] = imageUrl;
+
+          String response;
+          serializeJson(responseDoc, response);
+
+          Serial.println("✅ Proxy upload successful, returning URL to camera");
+          request->send(200, "application/json", response);
+        } else {
+          // Failed to upload to ImageBB
+          Serial.println("❌ Proxy upload failed");
+          request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"ImageBB upload failed\"}");
+        }
+      }
+      // If not the last chunk, just accumulate and wait for more
     }
   );
 
