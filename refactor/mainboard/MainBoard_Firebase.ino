@@ -59,6 +59,12 @@ unsigned long lastCommandCheck = 0;
 const char *IMGBB_API_KEY = "3e8d9f103a965f49318d117decbedd77";
 const char *IMGBB_UPLOAD_URL = "https://api.imgbb.com/1/upload";
 
+// Static buffer for upload (single upload at a time)
+#define MAX_UPLOAD_SIZE 20480
+char uploadBuffer[MAX_UPLOAD_SIZE];
+size_t uploadBufferLen = 0;
+bool uploadInProgress = false;
+
 // ===========================
 // System State
 // ===========================
@@ -507,52 +513,61 @@ void setupHTTPEndpoints() {
   // Image upload proxy endpoint - receives images from camera and uploads to ImageBB
   server.on("/upload-image", HTTP_POST,
     [](AsyncWebServerRequest *request) {
-      // This is called after body is fully received
-      request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Body handler failed\"}");
+      // This shouldn't be called if body handler works
+      request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Body handler not triggered\"}");
     },
     NULL,
     [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-      // Body handler - accumulate data
+      // Check if upload already in progress
       if (index == 0) {
-        Serial.println("📸 Received image upload request from camera");
-        Serial.printf("📦 Total size: %d bytes, first chunk: %d bytes\n", total, len);
-        Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
-
-        // Allocate buffer for the complete payload
-        String* buffer = new String();
-        buffer->reserve(total + 100);
-        request->_tempObject = (void*)buffer;
-      }
-
-      // Get the buffer from request temp storage
-      String* buffer = (String*)request->_tempObject;
-      if (buffer) {
-        // Append chunk
-        for (size_t i = 0; i < len; i++) {
-          *buffer += (char)data[i];
+        if (uploadInProgress) {
+          Serial.println("⚠️ Upload already in progress, rejecting");
+          request->send(503, "application/json", "{\"status\":\"error\",\"message\":\"Server busy\"}");
+          return;
         }
 
-        Serial.printf("📊 Chunk received: %d/%d bytes (index: %d)\n", buffer->length(), total, index);
+        // Check size limit
+        if (total > MAX_UPLOAD_SIZE) {
+          Serial.printf("❌ Payload too large: %d bytes (max: %d)\n", total, MAX_UPLOAD_SIZE);
+          request->send(413, "application/json", "{\"status\":\"error\",\"message\":\"Payload too large\"}");
+          return;
+        }
+
+        uploadInProgress = true;
+        uploadBufferLen = 0;
+        Serial.println("📸 Received image upload request from camera");
+        Serial.printf("📦 Total size: %d bytes\n", total);
+        Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+      }
+
+      // Append chunk to static buffer
+      if (uploadBufferLen + len <= MAX_UPLOAD_SIZE) {
+        memcpy(uploadBuffer + uploadBufferLen, data, len);
+        uploadBufferLen += len;
+        Serial.printf("📊 Chunk: %d/%d bytes\n", uploadBufferLen, total);
+      } else {
+        Serial.println("❌ Buffer overflow");
+        uploadInProgress = false;
+        uploadBufferLen = 0;
+        request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Buffer overflow\"}");
+        return;
       }
 
       // Check if this is the last chunk
       if (index + len >= total) {
         Serial.println("✅ All chunks received, processing...");
 
-        String* buffer = (String*)request->_tempObject;
-        if (!buffer) {
-          request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Buffer error\"}");
-          return;
-        }
+        // Null-terminate for safety
+        uploadBuffer[uploadBufferLen] = '\0';
 
         // Parse complete JSON payload
-        DynamicJsonDocument doc(20480);  // 20KB buffer for complete base64 image data
-        DeserializationError error = deserializeJson(doc, *buffer);
+        DynamicJsonDocument doc(20480);
+        DeserializationError error = deserializeJson(doc, uploadBuffer, uploadBufferLen);
 
         if (error) {
           Serial.printf("❌ JSON parsing failed: %s\n", error.c_str());
-          delete buffer;
-          request->_tempObject = NULL;
+          uploadInProgress = false;
+          uploadBufferLen = 0;
           request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON\"}");
           return;
         }
@@ -564,9 +579,9 @@ void setupHTTPEndpoints() {
 
         Serial.printf("📦 Received from %s: %d bytes (%s)\n", deviceId.c_str(), imageData.length(), format.c_str());
 
-        // Clean up buffer
-        delete buffer;
-        request->_tempObject = NULL;
+        // Reset upload state
+        uploadInProgress = false;
+        uploadBufferLen = 0;
 
         // Upload to ImageBB
         String imageUrl = uploadToImageBB(imageData);
