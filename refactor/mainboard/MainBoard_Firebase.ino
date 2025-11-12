@@ -59,10 +59,6 @@ unsigned long lastCommandCheck = 0;
 const char *IMGBB_API_KEY = "3e8d9f103a965f49318d117decbedd77";
 const char *IMGBB_UPLOAD_URL = "https://api.imgbb.com/1/upload";
 
-// Buffer for chunked upload data
-String uploadBuffer = "";
-size_t uploadTotalSize = 0;
-
 // ===========================
 // System State
 // ===========================
@@ -509,35 +505,56 @@ void setupHTTPEndpoints() {
   );
 
   // Image upload proxy endpoint - receives images from camera and uploads to ImageBB
-  server.on("/upload-image", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+  // Using ArRequestHandlerFunction with body handler
+  AsyncCallbackWebHandler* uploadHandler = &server.on("/upload-image", HTTP_POST,
+    [](AsyncWebServerRequest *request) {
+      // This is called after body is fully received
+      request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Body handler failed\"}");
+    },
+    NULL,
     [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-      // Handle chunked data accumulation
+      // Body handler - accumulate data
       if (index == 0) {
-        // First chunk - reset buffer
-        uploadBuffer = "";
-        uploadTotalSize = total;
         Serial.println("📸 Received image upload request from camera");
-        Serial.printf("📦 Total size: %d bytes\n", total);
+        Serial.printf("📦 Total size: %d bytes, first chunk: %d bytes\n", total, len);
+        Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+
+        // Allocate buffer for the complete payload
+        String* buffer = new String();
+        buffer->reserve(total + 100);
+        request->_tempObject = (void*)buffer;
       }
 
-      // Append chunk to buffer
-      for (size_t i = 0; i < len; i++) {
-        uploadBuffer += (char)data[i];
+      // Get the buffer from request temp storage
+      String* buffer = (String*)request->_tempObject;
+      if (buffer) {
+        // Append chunk
+        for (size_t i = 0; i < len; i++) {
+          *buffer += (char)data[i];
+        }
+
+        Serial.printf("📊 Chunk received: %d/%d bytes (index: %d)\n", buffer->length(), total, index);
       }
 
       // Check if this is the last chunk
-      if (index + len == total) {
+      if (index + len >= total) {
         Serial.println("✅ All chunks received, processing...");
-        Serial.printf("💾 Free heap: %d bytes\n", ESP.getFreeHeap());
+
+        String* buffer = (String*)request->_tempObject;
+        if (!buffer) {
+          request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Buffer error\"}");
+          return;
+        }
 
         // Parse complete JSON payload
-        DynamicJsonDocument doc(16384);  // Larger buffer for complete base64 image data
-        DeserializationError error = deserializeJson(doc, uploadBuffer);
+        DynamicJsonDocument doc(20480);  // 20KB buffer for complete base64 image data
+        DeserializationError error = deserializeJson(doc, *buffer);
 
         if (error) {
           Serial.printf("❌ JSON parsing failed: %s\n", error.c_str());
+          delete buffer;
+          request->_tempObject = NULL;
           request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON\"}");
-          uploadBuffer = "";  // Clear buffer
           return;
         }
 
@@ -548,11 +565,12 @@ void setupHTTPEndpoints() {
 
         Serial.printf("📦 Received from %s: %d bytes (%s)\n", deviceId.c_str(), imageData.length(), format.c_str());
 
+        // Clean up buffer
+        delete buffer;
+        request->_tempObject = NULL;
+
         // Upload to ImageBB
         String imageUrl = uploadToImageBB(imageData);
-
-        // Clear buffer
-        uploadBuffer = "";
 
         if (imageUrl.length() > 0) {
           // Success - return image URL to camera
@@ -571,9 +589,11 @@ void setupHTTPEndpoints() {
           request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"ImageBB upload failed\"}");
         }
       }
-      // If not the last chunk, just accumulate and wait for more
     }
   );
+
+  // Set max body size for upload handler (16KB should be enough for compressed JPEGs)
+  uploadHandler->setMaxContentLength(16384);
 
   // Status endpoint
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -708,9 +728,13 @@ void setup() {
   // Setup HTTP endpoints
   setupHTTPEndpoints();
 
+  // Configure server limits for large image uploads
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+
   // Start HTTP server
   server.begin();
   Serial.println("🌐 HTTP server started on port 81");
+  Serial.println("📦 Max body size configured for image uploads");
 
   Serial.println("🚀 BantayBot Main Board ready!");
   Serial.println("🔥 Firebase: " + String(firebaseConnected ? "ENABLED" : "DISABLED"));
