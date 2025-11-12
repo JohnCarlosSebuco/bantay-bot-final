@@ -505,8 +505,7 @@ void setupHTTPEndpoints() {
   );
 
   // Image upload proxy endpoint - receives images from camera and uploads to ImageBB
-  // Using ArRequestHandlerFunction with body handler
-  AsyncCallbackWebHandler* uploadHandler = &server.on("/upload-image", HTTP_POST,
+  server.on("/upload-image", HTTP_POST,
     [](AsyncWebServerRequest *request) {
       // This is called after body is fully received
       request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Body handler failed\"}");
@@ -591,9 +590,6 @@ void setupHTTPEndpoints() {
       }
     }
   );
-
-  // Set max body size for upload handler (16KB should be enough for compressed JPEGs)
-  uploadHandler->setMaxContentLength(16384);
 
   // Status endpoint
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
