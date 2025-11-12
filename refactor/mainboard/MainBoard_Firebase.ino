@@ -713,12 +713,14 @@ void checkFirebaseCommands() {
       FirebaseJsonData result;
       json.setJsonData(payload);
 
-      // Get documents array
+      // Get documents array using FirebaseJsonData
       json.get(result, "documents");
 
       if (result.success && result.type == "array") {
+        // Get the array string and parse it
+        String arrayStr = result.stringValue;
         FirebaseJsonArray docs;
-        json.get(docs, "documents");
+        docs.setJsonArrayData(arrayStr);
 
         if (docs.size() > 0) {
           FirebaseJsonData docData;
