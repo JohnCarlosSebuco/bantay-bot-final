@@ -52,7 +52,6 @@ FirebaseConfig fbConfig;
 bool firebaseConnected = false;
 unsigned long lastFirebaseUpdate = 0;
 unsigned long lastCommandCheck = 0;
-const unsigned long COMMAND_CHECK_INTERVAL = 2000;  // 2 seconds
 
 // ===========================
 // ImageBB Configuration (for Camera proxy)
@@ -703,53 +702,84 @@ void checkFirebaseCommands() {
 
   String path = "commands/main_001/pending";
 
-  if (Firebase.Firestore.listDocuments(&fbdo, FIREBASE_PROJECT_ID, "", path.c_str())) {
-    // Get first pending command
-    FirebaseJsonArray arr;
-    fbdo.get(arr);
+  // Use listDocuments with proper parameters
+  if (Firebase.Firestore.listDocuments(&fbdo, FIREBASE_PROJECT_ID, "", path.c_str(),
+                                       1, "", "", "", false)) {
+    // Parse response payload
+    String payload = fbdo.payload();
 
-    if (arr.size() > 0) {
-      FirebaseJson item;
-      arr.get(item, 0);
+    if (payload.length() > 0) {
+      FirebaseJson json;
+      FirebaseJsonData result;
+      json.setJsonData(payload);
 
-      String action;
-      item.get(action, "action");
+      // Get documents array
+      json.get(result, "documents");
 
-      Serial.println("📥 Received command: " + action);
+      if (result.success && result.type == "array") {
+        FirebaseJsonArray docs;
+        json.get(docs, "documents");
 
-      // Execute command
-      if (action == "play_audio") {
-        int track;
-        item.get(track, "params/track");
-        playAudio(track);
+        if (docs.size() > 0) {
+          FirebaseJsonData docData;
+          docs.get(docData, 0);
+
+          if (docData.success) {
+            FirebaseJson docJson;
+            docJson.setJsonData(docData.stringValue);
+
+            // Get action field
+            FirebaseJsonData actionData;
+            docJson.get(actionData, "fields/action/stringValue");
+            String action = actionData.stringValue;
+
+            Serial.println("📥 Received command: " + action);
+
+            // Execute command
+            if (action == "play_audio") {
+              FirebaseJsonData trackData;
+              docJson.get(trackData, "fields/params/mapValue/fields/track/integerValue");
+              int track = trackData.intValue;
+              playAudio(track);
+            }
+            else if (action == "set_volume") {
+              FirebaseJsonData volumeData;
+              docJson.get(volumeData, "fields/params/mapValue/fields/volume/integerValue");
+              int volume = volumeData.intValue;
+              setVolume(volume);
+            }
+            else if (action == "oscillate_arms") {
+              startServoOscillation();
+            }
+            else if (action == "rotate_head") {
+              FirebaseJsonData angleData;
+              docJson.get(angleData, "fields/params/mapValue/fields/angle/integerValue");
+              int angle = angleData.intValue;
+              rotateHead(angle);
+            }
+            else if (action == "trigger_alarm") {
+              triggerAlarmSequence();
+            }
+
+            // Mark as completed - get document name/id
+            FirebaseJsonData nameData;
+            docJson.get(nameData, "name");
+            String docName = nameData.stringValue;
+
+            // Extract just the document ID from the full path
+            int lastSlash = docName.lastIndexOf('/');
+            String docId = docName.substring(lastSlash + 1);
+            String completePath = path + "/" + docId;
+
+            FirebaseJson updateDoc;
+            updateDoc.set("fields/status/stringValue", "completed");
+            updateDoc.set("fields/completed_at/integerValue", String(millis()));
+
+            Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", completePath.c_str(),
+                                           updateDoc.raw(), "status,completed_at");
+          }
+        }
       }
-      else if (action == "set_volume") {
-        int volume;
-        item.get(volume, "params/volume");
-        setVolume(volume);
-      }
-      else if (action == "oscillate_arms") {
-        startServoOscillation();
-      }
-      else if (action == "rotate_head") {
-        int angle;
-        item.get(angle, "params/angle");
-        rotateHead(angle);
-      }
-      else if (action == "trigger_alarm") {
-        triggerAlarmSequence();
-      }
-
-      // Mark as completed
-      String docId;
-      item.get(docId, "id");
-      String completePath = path + "/" + docId;
-
-      FirebaseJson updateDoc;
-      updateDoc.set("fields/status/stringValue", "completed");
-      updateDoc.set("fields/completed_at/timestampValue", "now");
-
-      Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", completePath.c_str(), updateDoc.raw());
     }
   }
 }
