@@ -332,11 +332,13 @@ void recordUpload(bool isDetection) {
 
 bool notifyMainBoard(String imageUrl, int birdSize, int confidence) {
   Serial.println("📡 Notifying Main Board...");
+  Serial.printf("🔗 Target URL: http://%s:%d/bird_detected\n", MAIN_BOARD_IP, MAIN_BOARD_PORT);
 
   HTTPClient http;
   String url = "http://" + String(MAIN_BOARD_IP) + ":" + String(MAIN_BOARD_PORT) + "/bird_detected";
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
+  http.setTimeout(5000);  // 5 second timeout
 
   // Build JSON payload
   DynamicJsonDocument doc(512);
