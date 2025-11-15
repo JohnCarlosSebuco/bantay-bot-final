@@ -374,6 +374,14 @@ void rotateHead(int targetDegrees) {
 
   Serial.printf("🔄 Rotating head to %d degrees (%ld steps)\n", targetDegrees, targetSteps);
   Serial.printf("🏃 Distance to go: %ld steps\n", stepper.distanceToGo());
+
+  // BLOCKING TEST: Force motor to complete movement now
+  Serial.println("⚠️  BLOCKING MODE: Waiting for motor to reach position...");
+  unsigned long startTime = millis();
+  stepper.runToPosition();  // Blocks until position reached
+  unsigned long duration = millis() - startTime;
+  Serial.printf("✅ Motor reached position in %lu ms\n", duration);
+  Serial.printf("📍 Final position: %ld steps\n", stepper.currentPosition());
 }
 
 // ===========================
