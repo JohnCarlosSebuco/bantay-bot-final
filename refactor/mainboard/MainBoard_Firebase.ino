@@ -359,13 +359,21 @@ void updateServoOscillation() {
 // ===========================
 
 void rotateHead(int targetDegrees) {
+  Serial.println("🔧 rotateHead() called");
+
   // Enable stepper motor (active LOW)
   digitalWrite(STEPPER_ENABLE_PIN, LOW);
+  Serial.printf("✅ Stepper ENABLED (pin %d = LOW)\n", STEPPER_ENABLE_PIN);
 
   long targetSteps = (long)targetDegrees * STEPS_PER_REVOLUTION / 360;
+  Serial.printf("📊 Current position: %ld steps\n", stepper.currentPosition());
+  Serial.printf("🎯 Target: %d degrees = %ld steps\n", targetDegrees, targetSteps);
+
   stepper.moveTo(targetSteps);
   currentHeadPosition = targetDegrees;
+
   Serial.printf("🔄 Rotating head to %d degrees (%ld steps)\n", targetDegrees, targetSteps);
+  Serial.printf("🏃 Distance to go: %ld steps\n", stepper.distanceToGo());
 }
 
 // ===========================
@@ -868,6 +876,14 @@ void loop() {
   updateServoOscillation();
 
   // Run stepper motor
+  static unsigned long lastStepperDebug = 0;
+  if (stepper.distanceToGo() != 0) {
+    // Motor is moving
+    if (currentTime - lastStepperDebug >= 1000) {
+      Serial.printf("⚙️  Stepper running - Distance to go: %ld steps\n", stepper.distanceToGo());
+      lastStepperDebug = currentTime;
+    }
+  }
   stepper.run();
 
   // Firebase operations
