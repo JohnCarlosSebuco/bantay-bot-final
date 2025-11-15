@@ -30,6 +30,13 @@
 #include "board_config.h"
 
 // ===========================
+// Feature Flags
+// ===========================
+// Set to true to enable ImgBB uploads (detection will be slower)
+// Set to false for faster detection response (no image uploads)
+#define ENABLE_IMGBB_UPLOAD false
+
+// ===========================
 // WiFi Credentials
 // ===========================
 const char *WIFI_SSID = "HUAWEI-E5330-6AB9";
@@ -455,6 +462,8 @@ bool detectBirdMotion() {
 
         // Check if we can upload (rate limit check)
         String imageUrl = "";
+
+        #if ENABLE_IMGBB_UPLOAD
         if (canUpload()) {
           // Upload image to ImageBB (uses currentFrame before we return it)
           imageUrl = uploadViaMainBoard(currentFrame);
@@ -466,6 +475,9 @@ bool detectBirdMotion() {
         } else {
           Serial.println("⚠️  Daily upload limit reached, skipping ImageBB upload");
         }
+        #else
+        Serial.println("📸 ImgBB upload disabled - detection only mode");
+        #endif
 
         // Always notify main board (with or without image URL)
         notifyMainBoard(imageUrl, changedPixels, confidence);
@@ -575,6 +587,7 @@ void setup() {
     }
   );
 
+  #if ENABLE_IMGBB_UPLOAD
   // On-demand capture endpoint (uploads to ImageBB)
   server.on("/capture", HTTP_GET, [](AsyncWebServerRequest *request) {
     unsigned long now = millis();
@@ -620,7 +633,14 @@ void setup() {
       request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Upload failed via Main Board proxy\"}");
     }
   });
+  #else
+  // Disabled: ImgBB upload feature is turned off
+  server.on("/capture", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(503, "application/json", "{\"status\":\"disabled\",\"message\":\"ImgBB upload feature is currently disabled\"}");
+  });
+  #endif
 
+  #if ENABLE_IMGBB_UPLOAD
   // Local preview endpoint (no ImageBB upload - just returns JPEG)
   server.on("/preview", HTTP_GET, [](AsyncWebServerRequest *request) {
     Serial.println("👁️  Local preview requested");
@@ -658,6 +678,12 @@ void setup() {
 
     Serial.println("✅ Local preview sent (no upload)");
   });
+  #else
+  // Disabled: Preview feature is turned off
+  server.on("/preview", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(503, "application/json", "{\"status\":\"disabled\",\"message\":\"Preview feature is currently disabled\"}");
+  });
+  #endif
 
   // Upload statistics endpoint
   server.on("/stats", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -693,14 +719,30 @@ void setup() {
 
   Serial.println("\n🚀 BantayBot Camera Board ready!");
   Serial.println("📸 Bird detection: " + String(birdDetectionEnabled ? "ENABLED" : "DISABLED"));
+
+  #if ENABLE_IMGBB_UPLOAD
+  Serial.println("🌐 ImgBB uploads: ENABLED");
+  #else
+  Serial.println("🌐 ImgBB uploads: DISABLED (detection-only mode)");
+  #endif
+
   Serial.println("\n📡 Endpoints:");
   Serial.println("  🔗 Main Board: http://" + String(MAIN_BOARD_IP) + ":" + String(MAIN_BOARD_PORT));
+
+  #if ENABLE_IMGBB_UPLOAD
   Serial.println("  📷 Capture (ImageBB): GET http://" + WiFi.localIP().toString() + "/capture");
   Serial.println("  👁️  Preview (local): GET http://" + WiFi.localIP().toString() + "/preview");
   Serial.println("  📊 Statistics: GET http://" + WiFi.localIP().toString() + "/stats");
-  Serial.println("  ⚙️  Settings: POST http://" + WiFi.localIP().toString() + "/settings");
   Serial.println("\n📊 Upload Budget: " + String(DAILY_UPLOAD_LIMIT) + " uploads/day");
   Serial.println("💡 Use /preview for quick checks (no upload), /capture for ImageBB storage");
+  #else
+  Serial.println("  📷 Capture: DISABLED (ImgBB uploads off)");
+  Serial.println("  👁️  Preview: DISABLED (ImgBB uploads off)");
+  Serial.println("  📊 Statistics: GET http://" + WiFi.localIP().toString() + "/stats");
+  Serial.println("\n⚡ Performance Mode: Fast detection response (no image uploads)");
+  #endif
+
+  Serial.println("  ⚙️  Settings: POST http://" + WiFi.localIP().toString() + "/settings");
 }
 
 void loop() {

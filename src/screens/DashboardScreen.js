@@ -574,9 +574,10 @@ const DashboardScreen = () => {
 
             <View style={styles.cameraCard}>
               <View style={styles.cameraHeader}>
-                <View style={styles.liveBadge}>
-                  <View style={styles.liveDot} />
-                  <Text style={styles.liveText}>LIVE</Text>
+                <View style={[styles.liveBadge, { backgroundColor: theme.colors.surface.secondary }]}>
+                  <Text style={[styles.liveText, { color: theme.colors.text.secondary }]}>
+                    {lang === 'tl' ? 'HINDI AKTIBO' : 'DISABLED'}
+                  </Text>
                 </View>
                 <Text style={{ fontSize: theme.typography.fontSize.xs, color: theme.colors.text.tertiary }}>
                   {formatTime(lastUpdate)}
@@ -584,22 +585,16 @@ const DashboardScreen = () => {
               </View>
 
               <View style={styles.streamContainer}>
-                {streamUrl ? (
-                  <Image
-                    key={streamRefreshKey}
-                    source={{ uri: `${streamUrl}?t=${Date.now()}` }}
-                    style={styles.streamImage}
-                    resizeMode="cover"
-                    onError={() => console.log('Stream error')}
-                  />
-                ) : (
-                  <View style={styles.streamPlaceholder}>
-                    <Ionicons name="camera-outline" size={48} color={theme.colors.text.disabled} />
-                    <Text style={styles.streamPlaceholderText}>
-                      {lang === 'tl' ? 'Naglo-load...' : 'Loading...'}
-                    </Text>
-                  </View>
-                )}
+                {/* Camera streaming temporarily disabled for performance */}
+                <View style={styles.streamPlaceholder}>
+                  <Ionicons name="camera-off-outline" size={64} color={theme.colors.text.disabled} />
+                  <Text style={[styles.streamPlaceholderText, { fontSize: theme.typography.fontSize.md, fontWeight: '600', marginTop: theme.spacing[3] }]}>
+                    {lang === 'tl' ? 'Kamera Pansamantala ay Hindi Aktibo' : 'Camera Temporarily Disabled'}
+                  </Text>
+                  <Text style={[styles.streamPlaceholderText, { fontSize: theme.typography.fontSize.xs, marginTop: theme.spacing[2], color: theme.colors.text.tertiary }]}>
+                    {lang === 'tl' ? 'Pagdetekta ay gumagana pa rin' : 'Detection still active'}
+                  </Text>
+                </View>
               </View>
 
               <View style={styles.streamInfo}>
