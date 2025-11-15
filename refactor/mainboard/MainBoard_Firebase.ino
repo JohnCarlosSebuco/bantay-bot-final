@@ -359,10 +359,13 @@ void updateServoOscillation() {
 // ===========================
 
 void rotateHead(int targetDegrees) {
+  // Enable stepper motor (active LOW)
+  digitalWrite(STEPPER_ENABLE_PIN, LOW);
+
   long targetSteps = (long)targetDegrees * STEPS_PER_REVOLUTION / 360;
   stepper.moveTo(targetSteps);
   currentHeadPosition = targetDegrees;
-  Serial.printf("🔄 Rotating head to %d degrees\n", targetDegrees);
+  Serial.printf("🔄 Rotating head to %d degrees (%ld steps)\n", targetDegrees, targetSteps);
 }
 
 // ===========================
