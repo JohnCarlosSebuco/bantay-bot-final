@@ -36,10 +36,10 @@
 #define RS485_RX 17     // Serial2 RX
 #define RS485_TX 16     // Serial2 TX
 
-// Stepper Motor (Head Rotation)
-#define STEPPER_STEP_PIN 13
-#define STEPPER_DIR_PIN 15
-#define STEPPER_ENABLE_PIN 14
+// Stepper Motor (Head Rotation) - Matches working hardware config
+#define STEPPER_STEP_PIN 25
+#define STEPPER_DIR_PIN 33
+#define STEPPER_ENABLE_PIN 32
 
 // Servos (PCA9685 - I2C)
 #define SERVO_SDA 21
