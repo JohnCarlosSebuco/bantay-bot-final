@@ -41,11 +41,14 @@
 #define STEPPER_DIR_PIN 33
 #define STEPPER_ENABLE_PIN 32
 
-// Servos (PCA9685 - I2C)
-#define SERVO_SDA 21
-#define SERVO_SCL 22
-#define SERVO_ARM1 0    // PCA9685 Channel 0
-#define SERVO_ARM2 1    // PCA9685 Channel 1
+// Arm Steppers (NEMA 17 + A4988)
+#define ARM1_STEP_PIN 2
+#define ARM1_DIR_PIN 15
+#define ARM1_ENABLE_PIN 5
+
+#define ARM2_STEP_PIN 19
+#define ARM2_DIR_PIN 18
+#define ARM2_ENABLE_PIN 23
 
 // Sensors
 #define DHT_PIN 2       // DHT22 (backup sensor)
@@ -58,11 +61,6 @@
 
 // Stepper Motor
 #define STEPS_PER_REVOLUTION 3200  // 200 * 16 (microstepping)
-
-// Servos
-#define SERVO_MIN 120
-#define SERVO_MAX 600
-#define SERVO_FREQ 50  // 50Hz for servos
 
 // Audio
 #define TOTAL_TRACKS 7

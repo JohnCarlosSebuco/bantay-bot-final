@@ -7,7 +7,7 @@
  * - HTTP endpoint to receive bird detections from Camera Board
  * - DFPlayer Mini audio control
  * - RS485 4-in-1 soil sensor
- * - PCA9685 servo control (arm movement)
+ * - Dual stepper arm control (direct GPIO pulses)
  * - TMC2225 stepper motor (head rotation)
  * - DHT22 temperature/humidity sensor
  * - Autonomous alarm triggering
@@ -21,8 +21,6 @@
 #include <AccelStepper.h>
 #include <DHT.h>
 #include "DFRobotDFPlayerMini.h"
-#include <Wire.h>
-#include <Adafruit_PWMServoDriver.h>
 #include <base64.h>
 
 // Firebase includes
@@ -40,7 +38,6 @@ DFRobotDFPlayerMini dfPlayer;
 
 DHT dht(DHT_PIN, DHT_TYPE);
 AccelStepper stepper(AccelStepper::DRIVER, STEPPER_STEP_PIN, STEPPER_DIR_PIN);
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 AsyncWebServer server(81);  // Port 81 for main board
 
@@ -73,13 +70,17 @@ int currentTrack = 1;
 int volumeLevel = DEFAULT_VOLUME;
 bool audioPlaying = false;
 
-// Servo State
-int leftArmAngle = 90;
-int rightArmAngle = 90;
-bool servoOscillating = false;
-int servoOscillationCycles = 0;
-const int SERVO_TARGET_CYCLES = 6;  // 6 complete cycles
-unsigned long lastServoUpdate = 0;
+// Arm Stepper State
+bool armSteppersActive = false;
+int armStepDirection = 1;              // 1 = up, -1 = down
+int armCurrentStep1 = 0;
+int armCurrentStep2 = 0;
+int armSweepCount = 0;
+const int ARM_HALF_SWEEP_STEPS = 400;   // ~180°
+const int ARM_TARGET_SWEEPS = 6;        // 3 full cycles
+const int ARM_STEP_INTERVAL_MS = 2;     // 2ms timing window
+const int ARM_PULSE_DELAY_US = 400;     // pulse width for step pin
+unsigned long lastArmStepUpdate = 0;
 
 // RS485 Soil Sensor State
 const byte cmd_humidity[] = {0x01,0x03,0x00,0x00,0x00,0x01,0x84,0x0A};
@@ -181,7 +182,7 @@ void updateSensorData() {
   json.set("fields/ph/doubleValue", soilPH);
   json.set("fields/currentTrack/integerValue", String(currentTrack));
   json.set("fields/volume/integerValue", String(volumeLevel));
-  json.set("fields/servoActive/booleanValue", servoOscillating);
+  json.set("fields/servoActive/booleanValue", armSteppersActive);
   json.set("fields/headPosition/integerValue", String(currentHeadPosition));
   json.set("fields/timestamp/integerValue", String(millis()));
 
@@ -305,53 +306,60 @@ void setVolume(int level) {
 }
 
 // ===========================
-// Servo Functions
+// Arm Stepper Functions
 // ===========================
 
-void setServoAngle(uint8_t channel, int angle) {
-  int pulse = map(angle, 0, 180, SERVO_MIN, SERVO_MAX);
-  pwm.setPWM(channel, 0, pulse);
+void enableArmSteppers(bool enable) {
+  digitalWrite(ARM1_ENABLE_PIN, enable ? LOW : HIGH);
+  digitalWrite(ARM2_ENABLE_PIN, enable ? LOW : HIGH);
 }
 
-void startServoOscillation() {
-  servoOscillating = true;
-  servoOscillationCycles = 0;
-  leftArmAngle = 90;
-  rightArmAngle = 90;
-  Serial.println("👋 Starting arm oscillation (6 cycles)");
+void startArmStepperSequence() {
+  armSteppersActive = true;
+  armSweepCount = 0;
+  armStepDirection = 1;
+  armCurrentStep1 = 0;
+  armCurrentStep2 = ARM_HALF_SWEEP_STEPS;
+  enableArmSteppers(true);
+  Serial.println("👋 Starting arm stepper sweeps (3 full cycles)");
 }
 
-void updateServoOscillation() {
-  if (!servoOscillating) return;
+void stopArmStepperSequence() {
+  armSteppersActive = false;
+  enableArmSteppers(false);
+  Serial.println("✅ Arm stepper sequence complete");
+}
 
-  unsigned long currentTime = millis();
-  if (currentTime - lastServoUpdate < 30) return;  // 30ms update rate
+void updateArmSteppers() {
+  if (!armSteppersActive) return;
 
-  lastServoUpdate = currentTime;
+  unsigned long now = millis();
+  if (now - lastArmStepUpdate < ARM_STEP_INTERVAL_MS) return;
+  lastArmStepUpdate = now;
 
-  // Oscillate between 0 and 180 degrees
-  leftArmAngle += 3;
-  rightArmAngle -= 3;
+  digitalWrite(ARM1_DIR_PIN, (armStepDirection == 1) ? HIGH : LOW);
+  digitalWrite(ARM2_DIR_PIN, (armStepDirection == 1) ? LOW : HIGH);
 
-  if (leftArmAngle >= 180 || leftArmAngle <= 0) {
-    servoOscillationCycles++;
-    if (servoOscillationCycles >= SERVO_TARGET_CYCLES) {
-      servoOscillating = false;
-      leftArmAngle = 90;
-      rightArmAngle = 90;
-      setServoAngle(SERVO_ARM1, leftArmAngle);
-      setServoAngle(SERVO_ARM2, rightArmAngle);
-      Serial.println("✅ Oscillation complete");
-      return;
+  digitalWrite(ARM1_STEP_PIN, HIGH);
+  delayMicroseconds(ARM_PULSE_DELAY_US);
+  digitalWrite(ARM1_STEP_PIN, LOW);
+  delayMicroseconds(ARM_PULSE_DELAY_US);
+
+  digitalWrite(ARM2_STEP_PIN, HIGH);
+  delayMicroseconds(ARM_PULSE_DELAY_US);
+  digitalWrite(ARM2_STEP_PIN, LOW);
+  delayMicroseconds(ARM_PULSE_DELAY_US);
+
+  armCurrentStep1 += armStepDirection;
+  armCurrentStep2 -= armStepDirection;
+
+  if (armCurrentStep1 >= ARM_HALF_SWEEP_STEPS || armCurrentStep1 <= 0) {
+    armStepDirection = -armStepDirection;
+    armSweepCount++;
+    if (armSweepCount >= ARM_TARGET_SWEEPS) {
+      stopArmStepperSequence();
     }
   }
-
-  // Constrain angles
-  leftArmAngle = constrain(leftArmAngle, 0, 180);
-  rightArmAngle = constrain(rightArmAngle, 0, 180);
-
-  setServoAngle(SERVO_ARM1, leftArmAngle);
-  setServoAngle(SERVO_ARM2, rightArmAngle);
 }
 
 // ===========================
@@ -381,8 +389,8 @@ void triggerAlarmSequence() {
   if (track == 3) track = 4;  // Skip track 3
   playAudio(track);
 
-  // Start servo oscillation
-  startServoOscillation();
+  // Start arm sweeps
+  startArmStepperSequence();
 
   // Rotate head (random direction)
   int headAngle = random(0, 2) == 0 ? -90 : 90;
@@ -622,7 +630,7 @@ void setupHTTPEndpoints() {
     doc["ph"] = soilPH;
     doc["currentTrack"] = currentTrack;
     doc["volume"] = volumeLevel;
-    doc["servoActive"] = servoOscillating;
+    doc["servoActive"] = armSteppersActive;
     doc["headPosition"] = currentHeadPosition;
     doc["birdsToday"] = birdsDetectedToday;
     doc["freeHeap"] = ESP.getFreeHeap();
@@ -662,7 +670,7 @@ void setupHTTPEndpoints() {
 
   // Servo control endpoint
   server.on("/move-arms", HTTP_GET, [](AsyncWebServerRequest *request) {
-    startServoOscillation();
+    startArmStepperSequence();
     request->send(200, "application/json", "{\"status\":\"oscillating\"}");
   });
 
@@ -698,14 +706,16 @@ void setup() {
   digitalWrite(STEPPER_ENABLE_PIN, HIGH); // Disable stepper initially
   digitalWrite(SPEAKER_PIN, LOW);
 
-  // Initialize I2C for servos
-  Wire.begin(SERVO_SDA, SERVO_SCL);
-  pwm.begin();
-  pwm.setPWMFreq(SERVO_FREQ);
-
-  // Initialize servos to center position
-  setServoAngle(SERVO_ARM1, 90);
-  setServoAngle(SERVO_ARM2, 90);
+  // Arm stepper pins
+  pinMode(ARM1_STEP_PIN, OUTPUT);
+  pinMode(ARM1_DIR_PIN, OUTPUT);
+  pinMode(ARM1_ENABLE_PIN, OUTPUT);
+  pinMode(ARM2_STEP_PIN, OUTPUT);
+  pinMode(ARM2_DIR_PIN, OUTPUT);
+  pinMode(ARM2_ENABLE_PIN, OUTPUT);
+  digitalWrite(ARM1_STEP_PIN, LOW);
+  digitalWrite(ARM2_STEP_PIN, LOW);
+  enableArmSteppers(false);
 
   // Initialize RS485 for soil sensor
   Serial2.begin(4800, SERIAL_8N1, RS485_RX, RS485_TX);
@@ -818,7 +828,7 @@ void checkFirebaseCommands() {
               setVolume(volume);
             }
             else if (action == "oscillate_arms") {
-              startServoOscillation();
+              startArmStepperSequence();
             }
             else if (action == "rotate_head") {
               FirebaseJsonData angleData;
@@ -866,8 +876,8 @@ void loop() {
                   soilHumidity, soilTemperature, soilConductivity, soilPH);
   }
 
-  // Update servo oscillation
-  updateServoOscillation();
+  // Update arm stepper motion
+  updateArmSteppers();
 
   // Run stepper motor
   stepper.run();
